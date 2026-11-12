@@ -31,22 +31,41 @@ interface Run {
 }
 
 export interface RedTeamRunner {
-  start(mandateId: string, agentToken: string): Promise<{ run_id: string }>;
-  startLive(mandateId: string, agentToken: string, task: string): Promise<{ run_id: string }>;
+  start(mandateId: string, ownerId: string): Promise<{ run_id: string }>;
+  startLive(mandateId: string, ownerId: string, task: string): Promise<{ run_id: string }>;
   get(runId: string): Promise<Run>;
 }
 
-export function createAgentRunner(opts: { gatewayUrl: string; anthropic: { apiKey: string; model: string } | null }): RedTeamRunner {
-  const runs = new Map<string, Run>();
-  const active = new Set<string>();
+export interface RunnerOptions {
+  gatewayUrl: string;
+  /** LLM credentials handed to the LIVE agent only. Use a separate, spend-capped key (AGENT_ANTHROPIC_API_KEY). */
+  agentLlm: { apiKey: string; model: string } | null;
+  /** Mint a per-run token scoped to one mandate (review R1). */
+  mint: (mandateId: string) => Promise<string>;
+  /** Global cap on concurrently running agent processes (review R4). */
+  maxActive?: number;
+}
 
-  const launch = (kind: Run["kind"], mandateId: string, agentToken: string, extra: Record<string, string>) => {
-    if (active.has(mandateId)) throw new HttpError(409, "an agent run is already in progress for this mandate");
+export function createAgentRunner(opts: RunnerOptions): RedTeamRunner {
+  const runs = new Map<string, Run>();
+  const activeOwners = new Set<string>();
+  const maxActive = opts.maxActive ?? 3;
+
+  const launch = async (kind: Run["kind"], mandateId: string, ownerId: string, extra: Record<string, string>) => {
+    if (activeOwners.has(ownerId)) throw new HttpError(409, "an agent run is already in progress for this owner");
+    if (activeOwners.size >= maxActive) throw new HttpError(429, "too many agent runs right now; try again shortly");
+    activeOwners.add(ownerId);
+    let agentToken: string;
+    try {
+      agentToken = await opts.mint(mandateId);
+    } catch (e) {
+      activeOwners.delete(ownerId);
+      throw e;
+    }
     const run_id = randomUUID();
     const run: Run = { run_id, kind, mandate_id: mandateId, status: "running", started_at: new Date().toISOString(), finished_at: null, events: [], stderr: "" };
     runs.set(run_id, run);
     if (runs.size > 100) runs.delete(runs.keys().next().value!);
-    active.add(mandateId);
     const script = join(AGENT_SRC, kind === "redteam" ? "redteam.ts" : "shopper.ts");
     const child = spawn(process.execPath, ["--import", "tsx", script], {
       cwd: GATEWAY_DIR,
@@ -74,7 +93,7 @@ export function createAgentRunner(opts: { gatewayUrl: string; anthropic: { apiKe
     const timer = setTimeout(() => child.kill(), 5 * 60_000);
     child.on("close", (code) => {
       clearTimeout(timer);
-      active.delete(mandateId);
+      activeOwners.delete(ownerId);
       run.status = code === 0 ? "done" : "error";
       run.finished_at = new Date().toISOString();
     });
@@ -82,12 +101,12 @@ export function createAgentRunner(opts: { gatewayUrl: string; anthropic: { apiKe
   };
 
   return {
-    async start(mandateId, agentToken) {
-      return launch("redteam", mandateId, agentToken, {});
+    async start(mandateId, ownerId) {
+      return launch("redteam", mandateId, ownerId, {});
     },
-    async startLive(mandateId, agentToken, task) {
-      if (!opts.anthropic) throw new HttpError(400, "live agent needs ANTHROPIC_API_KEY");
-      return launch("live", mandateId, agentToken, { TASK: task.slice(0, 1000), ANTHROPIC_API_KEY: opts.anthropic.apiKey, LLM_MODEL: opts.anthropic.model });
+    async startLive(mandateId, ownerId, task) {
+      if (!opts.agentLlm) throw new HttpError(400, "live agent needs an LLM key");
+      return launch("live", mandateId, ownerId, { TASK: task.slice(0, 1000), ANTHROPIC_API_KEY: opts.agentLlm.apiKey, LLM_MODEL: opts.agentLlm.model });
     },
     async get(runId) {
       const r = runs.get(runId);

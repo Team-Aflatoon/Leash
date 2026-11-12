@@ -4,7 +4,8 @@ import { signJson } from "@leash/core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { startWorker } from "../../gateway/src/jobs.ts";
 import { agentEnv, createAgentRunner } from "../../gateway/src/redteam.ts";
-import { AGENT_TOKEN, makeWorld, type World } from "../../gateway/test/helpers.ts";
+import { mintAgentToken } from "../../gateway/src/service.ts";
+import { makeWorld, type World } from "../../gateway/test/helpers.ts";
 import { GatewayClient } from "../src/client.ts";
 import { runRedTeam, type ScenarioResult } from "../src/redteam.ts";
 
@@ -58,7 +59,7 @@ describe("red-team mode", () => {
     const runs: ScenarioResult[][] = [];
     for (const runId of ["a", "b"]) {
       const mandateId = await w.newMandate();
-      const client = new GatewayClient({ gatewayUrl: url, token: AGENT_TOKEN, mandateId });
+      const client = new GatewayClient({ gatewayUrl: url, token: await mintAgentToken(w.db, mandateId), mandateId });
       runs.push(await runRedTeam(client, runId, () => {}));
     }
     for (const r of runs[0]!) expect(r.pass, `${r.id}: ${r.verdict}`).toBe(true);
@@ -70,8 +71,8 @@ describe("red-team mode", () => {
 
   it("runs as a separate OS process through the gateway's runner", async () => {
     const mandateId = await w.newMandate();
-    const runner = createAgentRunner({ gatewayUrl: url, anthropic: null });
-    const { run_id } = await runner.start(mandateId, AGENT_TOKEN);
+    const runner = createAgentRunner({ gatewayUrl: url, agentLlm: null, mint: (id) => mintAgentToken(w.db, id) });
+    const { run_id } = await runner.start(mandateId, w.owner.owner_id);
     let run = await runner.get(run_id);
     for (let i = 0; i < 200 && run.status === "running"; i++) {
       await new Promise((r) => setTimeout(r, 250));

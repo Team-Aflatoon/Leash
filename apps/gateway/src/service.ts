@@ -39,6 +39,12 @@ export class HttpError extends Error {
 }
 
 const DUPLICATE_WINDOW_HOURS = 24;
+
+/**
+ * The ledger is publicly readable for verification, so it never carries owner ids, addresses or mandate bodies —
+ * only commitments (review R2). owner_ref = sha256("owner:" + owner_id), unlinkable without the id.
+ */
+export const ownerRef = (ownerId: string) => sha256Hex(`owner:${ownerId}`).slice(0, 32);
 const STATEMENT_MAX_AGE_MS = 5 * 60_000;
 
 // ------------------------------------------------------------------------------------------------------------------
@@ -51,7 +57,7 @@ export async function registerOwner(deps: Deps, input: { display_name: string; p
   const owner_id = `own_${randomUUID().replace(/-/g, "").slice(0, 20)}`;
   await withTx(deps.db, async (tx) => {
     await tx.query("INSERT INTO owners(owner_id, display_name, public_key_hex) VALUES ($1,$2,$3)", [owner_id, name, input.public_key_hex]);
-    await appendLedger(tx, "owner.registered", { owner_id, public_key_hex: input.public_key_hex }, deps.now());
+    await appendLedger(tx, "owner.registered", { owner_ref: ownerRef(owner_id), public_key_hex: input.public_key_hex }, deps.now());
   });
   return { owner_id };
 }
@@ -77,7 +83,7 @@ export async function createMandate(deps: Deps, input: { body: unknown; signatur
       [body.mandate_id, body.owner_id, body.agent_id, JSON.stringify(body), body_hash, input.signature],
     );
     if (ins.rowCount === 0) throw new HttpError(409, "mandate id already used");
-    await appendLedger(tx, "mandate.signed", { mandate_id: body.mandate_id, owner_id: body.owner_id, body_hash, signature: input.signature, body }, deps.now());
+    await appendLedger(tx, "mandate.signed", { mandate_id: body.mandate_id, owner_ref: ownerRef(body.owner_id), body_hash, signature: input.signature }, deps.now());
   });
   return { mandate_id: body.mandate_id, body_hash };
 }
@@ -93,6 +99,9 @@ export async function revokeMandate(deps: Deps, input: { statement: unknown; sig
     const owner = await ownerKey(tx, m.owner_id);
     if (!owner || !verifyJson("revocation", st.data, input.signature, owner.public_key_hex)) throw new HttpError(401, "revocation signature invalid");
     if (m.revoked_at) return { already: true, voids: 0 };
+    // SAFETY (G4, review R10): take every live payment lock first. A capture already talking to PayPal holds its
+    // payment lock, so we wait for it; once this commits, no capture for this mandate can start or finish.
+    await tx.query("SELECT payment_id FROM payments WHERE mandate_id = $1 AND state IN ('RESERVED','AUTHORIZED') ORDER BY payment_id FOR NO KEY UPDATE", [st.data.mandate_id]);
     await tx.query("UPDATE mandates SET revoked_at = $2, revocation_signature = $3, revocation_reason = 'owner' WHERE mandate_id = $1", [st.data.mandate_id, now, input.signature]);
     const voids = await enqueueVoidsForMandate(tx, st.data.mandate_id, "mandate revoked");
     await appendLedger(tx, "mandate.revoked", { mandate_id: st.data.mandate_id, statement: st.data, signature: input.signature, holds_voided: voids }, now);
@@ -109,6 +118,7 @@ export async function retireOwnerMandates(deps: Deps, ownerId: string, reason: s
     const ms = (await tx.query<{ mandate_id: string }>("SELECT mandate_id FROM mandates WHERE owner_id = $1 AND revoked_at IS NULL FOR NO KEY UPDATE", [ownerId])).rows;
     let voids = 0;
     for (const m of ms) {
+      await tx.query("SELECT payment_id FROM payments WHERE mandate_id = $1 AND state IN ('RESERVED','AUTHORIZED') ORDER BY payment_id FOR NO KEY UPDATE", [m.mandate_id]);
       await tx.query("UPDATE mandates SET revoked_at = $2, revocation_reason = $3 WHERE mandate_id = $1", [m.mandate_id, now, reason]);
       voids += await enqueueVoidsForMandate(tx, m.mandate_id, reason);
     }
@@ -222,7 +232,11 @@ async function recordReplayOrConflict(deps: Deps, agentId: string, raw: unknown,
   return getDecision(deps.db, decision_id);
 }
 
-export async function submitProposal(deps: Deps, agentId: string, raw: unknown): Promise<DecisionView> {
+/**
+ * @param scopeMandateId the single mandate this agent token may act on (per-run tokens), or null for an unscoped
+ *   operator token. A proposal for any other mandate is recorded and blocked (review R1).
+ */
+export async function submitProposal(deps: Deps, agentId: string, raw: unknown, scopeMandateId: string | null = null): Promise<DecisionView> {
   const reqHash = requestHash(raw);
   const parsed = Proposal.safeParse(raw);
   const now = deps.now();
@@ -241,6 +255,7 @@ export async function submitProposal(deps: Deps, agentId: string, raw: unknown):
     return getDecision(deps.db, decision_id);
   }
   const p = parsed.data;
+  const outOfScope = scopeMandateId !== null && scopeMandateId !== p.mandate_id;
 
   const prior = await existingPrimary(deps.db, agentId, p.idempotency_key);
   if (prior) return recordReplayOrConflict(deps, agentId, raw, reqHash, prior, p.idempotency_key, p.mandate_id);
@@ -251,7 +266,7 @@ export async function submitProposal(deps: Deps, agentId: string, raw: unknown):
   const preRow = (await deps.db.query<MandateRow>("SELECT * FROM mandates WHERE mandate_id = $1", [p.mandate_id])).rows[0];
   const pre = evaluateRules({ now, agentId, mandate: await mandateState(deps.db, preRow), proposal: p, catalog, periodSpentCents: 0, duplicateOfRecent: false });
   let verdict: IntentVerdict = { kind: "skipped" };
-  if (pre.outcome !== "BLOCK" && preRow) {
+  if (pre.outcome !== "BLOCK" && preRow && !outOfScope) {
     verdict = await deps.intent.check({ intent: preRow.body.intent, lines: pre.lines, total_cents: pre.total_cents, merchant_id: pre.merchant_id, agent_note: p.note ?? null });
   }
 
@@ -279,8 +294,15 @@ export async function submitProposal(deps: Deps, agentId: string, raw: unknown):
         ).rowCount! > 0;
       }
       const rules = dup ? evaluateRules({ now, agentId, mandate: state, proposal: p, catalog, periodSpentCents: spent, duplicateOfRecent: true }) : rules0;
-      const final = combine(rules, rules.outcome === "BLOCK" ? { kind: "skipped" } : verdict);
-      const usedVerdict: IntentVerdict = rules.outcome === "BLOCK" ? { kind: "skipped" } : verdict;
+      if (outOfScope) {
+        rules.reasons.unshift({ code: "AGENT_NOT_AUTHORIZED", outcome: "BLOCK", source: "rules", message: "This agent token is scoped to a different mandate." });
+        rules.outcome = "BLOCK";
+      }
+      // If the pre-check blocked (so the LLM was never asked) but the authoritative rules now pass, we have no intent
+      // verdict for an order about to move money: fail closed to HOLD (review R11).
+      let usedVerdict: IntentVerdict = rules.outcome === "BLOCK" ? { kind: "skipped" } : verdict;
+      if (usedVerdict.kind === "skipped" && rules.outcome !== "BLOCK" && deps.intent.model) usedVerdict = { kind: "error", error: "intent not evaluated (state changed during the request)" };
+      const final = combine(rules, usedVerdict);
 
       await tx.query(
         `INSERT INTO decisions(decision_id, kind, agent_id, idempotency_key, mandate_id, request_body, request_hash, outcome, reasons, lines, total_cents, cart_hash, intent_verdict, mandate_hash)
@@ -347,6 +369,8 @@ export async function decideApproval(deps: Deps, input: { statement: unknown; si
     if (p.approval !== "PENDING") throw new HttpError(409, `payment approval is ${p.approval}`);
     if (p.state !== "AUTHORIZED") throw new HttpError(409, `payment is ${p.state}; wait for the PayPal authorization`);
     const approved = st.data.decision === "approve";
+    // Review R9: a hold past its deadline can only be voided, never approved (even if the expiry job is lagging).
+    if (approved && p.approval_expires_at && new Date(p.approval_expires_at).getTime() <= now.getTime()) throw new HttpError(409, "approval window has expired");
     await tx.query("UPDATE payments SET approval = $2, approval_signature = $3, updated_at = now() WHERE payment_id = $1", [p.payment_id, approved ? "APPROVED" : "REJECTED", input.signature]);
     await enqueue(tx, approved ? "payment.capture" : "payment.void", { payment_id: p.payment_id, reason: approved ? "owner approved" : "owner rejected" });
     await appendLedger(tx, approved ? "approval.approved" : "approval.rejected", { payment_id: p.payment_id, statement: st.data, signature: input.signature }, now);
@@ -480,11 +504,24 @@ export async function jobVoid(deps: Deps, paymentId: string, reason: string): Pr
     if (p.state === "RESERVED") return "retry"; // authorize still in flight; it re-checks the mandate itself
     if (p.state !== "AUTHORIZED") return "done";
     const now = deps.now();
+    let res: { status: "VOIDED" | "ALREADY_CAPTURED" };
     try {
-      await deps.provider.voidAuthorization({ requestId: `leash-${paymentId}-void`, authorizationId: p.paypal_authorization_id! });
+      res = await deps.provider.voidAuthorization({ requestId: `leash-${paymentId}-void`, authorizationId: p.paypal_authorization_id! });
     } catch (e) {
       if (!(e instanceof ProviderRejectedError)) throw e;
+      // Unknown refusal: keep the budget reserved (fail safe) and flag it for a human.
+      await tx.query("UPDATE payments SET last_error = $2, reconciliation = 'MISMATCH', reconciliation_note = 'void refused by PayPal', updated_at = now() WHERE payment_id = $1", [paymentId, e.message.slice(0, 500)]);
       await appendLedger(tx, "payment.void_rejected", { payment_id: paymentId, error: e.message.slice(0, 500) }, now);
+      return "done";
+    }
+    if (res.status === "ALREADY_CAPTURED") {
+      // SAFETY (G5, review R3): an earlier capture reached PayPal even though we never saw the answer. The money
+      // moved, so record a capture (budget stays counted), never a void.
+      await tx.query(
+        "UPDATE payments SET state = 'CAPTURED', reconciliation = 'MISMATCH', reconciliation_note = 'void found the authorization already captured', updated_at = now() WHERE payment_id = $1",
+        [paymentId],
+      );
+      await appendLedger(tx, "payment.captured", { payment_id: paymentId, amount_cents: p.amount_cents, discovered_by: "void", reason }, now);
       return "done";
     }
     await tx.query(
@@ -519,18 +556,19 @@ export async function receiveWebhook(deps: Deps, headers: Record<string, string 
   }
   if (!event.id || !event.event_type) throw new HttpError(400, "not a PayPal event");
   const verified = await deps.provider.verifyWebhook(headers, rawBody);
+  // SAFETY (review R6): unverified requests are refused and NOT stored, so a forged or transiently-unverifiable
+  // event can never occupy an event id and shadow PayPal's genuine redelivery, nor grow the ledger for free.
+  if (!verified) throw new HttpError(400, "webhook signature not verified");
   await withTx(deps.db, async (tx) => {
     const ins = await tx.query(
-      "INSERT INTO webhook_events(event_id, event_type, resource_id, verified, payload) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (event_id) DO NOTHING",
-      [event.id, event.event_type, event.resource?.id ?? null, verified, rawBody],
+      "INSERT INTO webhook_events(event_id, event_type, resource_id, verified, payload) VALUES ($1,$2,$3,true,$4) ON CONFLICT (event_id) DO NOTHING",
+      [event.id, event.event_type, event.resource?.id ?? null, rawBody],
     );
     if (!ins.rowCount) return; // PayPal redelivery: already have it
-    if (verified) await enqueue(tx, "webhook.process", { event_id: event.id });
-    await appendLedger(tx, verified ? "webhook.received" : "webhook.rejected_unverified", { event_id: event.id, event_type: event.event_type, resource_id: event.resource?.id ?? null }, deps.now());
+    await enqueue(tx, "webhook.process", { event_id: event.id });
+    await appendLedger(tx, "webhook.received", { event_id: event.id, event_type: event.event_type, resource_id: event.resource?.id ?? null }, deps.now());
   });
   deps.wake();
-  // SAFETY: unverified events are stored for audit but never change payment state.
-  if (!verified) throw new HttpError(400, "webhook signature not verified");
 }
 
 export async function jobProcessWebhook(deps: Deps, eventId: string) {
@@ -580,3 +618,12 @@ export async function jobProcessWebhook(deps: Deps, eventId: string) {
 }
 
 export { ProviderUncertainError };
+
+/** Mint a short-lived agent token scoped to ONE mandate (review R1). Only its hash is stored. */
+export async function mintAgentToken(db: Db, mandateId: string, ttlSeconds = 600): Promise<string> {
+  const m = (await db.query("SELECT agent_id FROM mandates WHERE mandate_id = $1", [mandateId])).rows[0];
+  if (!m) throw new HttpError(404, "unknown mandate");
+  const token = `lat_${randomUUID().replace(/-/g, "")}${randomUUID().replace(/-/g, "")}`;
+  await db.query("INSERT INTO agent_tokens(token_sha256, agent_id, mandate_id, expires_at) VALUES ($1,$2,$3, now() + make_interval(secs => $4))", [sha256Hex(token), m.agent_id, mandateId, ttlSeconds]);
+  return token;
+}

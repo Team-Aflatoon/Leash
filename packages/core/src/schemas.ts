@@ -89,7 +89,7 @@ export type RevocationStatement = z.infer<typeof RevocationStatement>;
 export const OwnerAction = z
   .object({
     owner_id: shortText(64),
-    action: z.enum(["paypal-link", "demo-reset", "redteam-run"]),
+    action: z.enum(["paypal-link", "demo-reset", "redteam-run", "read", "draft"]),
     target: z.string().max(64).optional(),
     signed_at: isoDate,
   })

@@ -31,7 +31,7 @@ export function App() {
   const refresh = useCallback(async () => {
     if (!owner) return;
     try {
-      setData(await api.get<Dashboard>(`/api/owners/${owner.owner_id}/dashboard`));
+      setData(await api.getAsOwner<Dashboard>(`/api/owners/${owner.owner_id}/dashboard`, owner));
       setTick((t) => t + 1);
     } catch (e) {
       const msg = (e as Error).message;

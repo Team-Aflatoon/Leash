@@ -28,12 +28,14 @@ declare module "fastify" {
   interface FastifyRequest {
     rawBody?: string;
     agentId?: string;
+    /** Mandate this agent token is scoped to; null for the unscoped operator token. */
+    agentScope?: string | null;
   }
 }
 
 export interface AppOptions {
   deps: Deps;
-  config: Pick<Config, "agentToken" | "gatewayPublicKeyHex" | "gatewaySecretKeyHex" | "demoMode" | "publicUrl"> & { paypalConfigured: boolean; llmConfigured: boolean };
+  config: Pick<Config, "gatewayPublicKeyHex" | "gatewaySecretKeyHex" | "demoMode" | "publicUrl"> & { paypalConfigured: boolean; llmConfigured: boolean; trustProxyHops?: number | false };
   drafter: MandateDrafter;
   redteam?: RedTeamRunner;
   rateLimit?: boolean;
@@ -53,7 +55,10 @@ export async function seed(db: Db, agentToken: string) {
 
 export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
   const { deps } = opts;
-  const app = Fastify({ logger: false, bodyLimit: 256 * 1024, trustProxy: true });
+    // Review R4: trust exactly the configured number of proxy hops (1 on Render). "true" would let any client pick its
+  // own IP via X-Forwarded-For and walk around the rate limits.
+  const hops = opts.config.trustProxyHops || 0;
+  const app = Fastify({ logger: false, bodyLimit: 256 * 1024, trustProxy: hops ? (_addr: string, i: number) => i < hops : false });
 
   // Keep the raw body: PayPal webhook verification must post back the event exactly as received.
   app.addContentTypeParser("application/json", { parseAs: "string" }, (req, body, done) => {
@@ -82,9 +87,25 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
     const h = req.headers.authorization ?? "";
     const tok = h.startsWith("Bearer ") ? h.slice(7) : "";
     if (!tok) throw new HttpError(401, "agent token required");
-    const r = await deps.db.query("SELECT agent_id FROM agents WHERE token_sha256 = $1", [sha256Hex(tok)]);
-    if (!r.rows[0]) throw new HttpError(401, "invalid agent token");
-    req.agentId = r.rows[0].agent_id;
+    const th = sha256Hex(tok);
+    const op = await deps.db.query("SELECT agent_id FROM agents WHERE token_sha256 = $1", [th]);
+    if (op.rows[0]) {
+      req.agentId = op.rows[0].agent_id;
+      req.agentScope = null;
+      return;
+    }
+    const run = await deps.db.query("SELECT agent_id, mandate_id FROM agent_tokens WHERE token_sha256 = $1 AND expires_at > now()", [th]);
+    if (!run.rows[0]) throw new HttpError(401, "invalid agent token");
+    req.agentId = run.rows[0].agent_id;
+    req.agentScope = run.rows[0].mandate_id;
+  };
+  const tokenKey = (req: FastifyRequest) => sha256Hex(String(req.headers.authorization ?? req.ip));
+  const ownerAuthHeader = (req: FastifyRequest) => {
+    try {
+      return JSON.parse(Buffer.from(String(req.headers["x-leash-auth"] ?? ""), "base64url").toString("utf8"));
+    } catch {
+      return null;
+    }
   };
 
   app.get("/api/health", async () => ({ ok: true }));
@@ -102,22 +123,29 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
 
   // ---- owners & mandates ---------------------------------------------------------------------------------------
   app.post("/api/owners", async (req) => registerOwner(deps, req.body as { display_name: string; public_key_hex: string }));
-  app.get("/api/owners/:id/dashboard", async (req) => dashboard(deps, (req.params as { id: string }).id));
+  // Review R2: an owner's dashboard (payer email, PayPal ids, agent requests) requires that owner's signature.
+  app.get("/api/owners/:id/dashboard", async (req) => {
+    const a = await verifyOwnerAction(deps, ownerAuthHeader(req), "read");
+    if (a.owner_id !== (req.params as { id: string }).id) throw new HttpError(403, "not your dashboard");
+    return dashboard(deps, a.owner_id);
+  });
   app.post("/api/owners/paypal/link", async (req) => {
     const a = await verifyOwnerAction(deps, req.body as never, "paypal-link");
     return startPayPalLink(deps, a.owner_id);
   });
   app.get("/api/paypal/return", async (req, reply) => {
-    const ownerId = String((req.query as { owner_id?: string }).owner_id ?? "");
+    const q = req.query as { owner_id?: string; approval_token_id?: string };
     try {
-      await finishPayPalLink(deps, ownerId);
+      await finishPayPalLink(deps, String(q.owner_id ?? ""), q.approval_token_id ? String(q.approval_token_id) : null);
       return reply.redirect("/?paypal=linked");
     } catch (e) {
       return reply.redirect(`/?paypal=error&message=${encodeURIComponent(e instanceof Error ? e.message : "link failed")}`);
     }
   });
-  app.post("/api/mandates/draft", async (req) => {
-    const b = req.body as { intent?: string; owner_id?: string };
+  // Review R4: drafting spends LLM tokens, so it needs an owner signature and has its own tight limit.
+  app.post("/api/mandates/draft", { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (req) => {
+    const b = req.body as { intent?: string; statement: unknown; signature: string };
+    await verifyOwnerAction(deps, b as never, "draft");
     const intent = String(b?.intent ?? "").slice(0, 1000);
     if (!intent.trim()) throw new HttpError(400, "intent required");
     return opts.drafter.draft(intent);
@@ -155,15 +183,19 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
       return q ? rows.filter((r) => `${r.title} ${r.category} ${r.sku}`.toLowerCase().includes(q)) : rows;
     });
     agent.get("/api/agent/mandates/:id", async (req) => {
-      const m = (await deps.db.query("SELECT body, revoked_at FROM mandates WHERE mandate_id = $1 AND agent_id = $2", [(req.params as { id: string }).id, req.agentId])).rows[0];
+      const id = (req.params as { id: string }).id;
+      if (req.agentScope && req.agentScope !== id) throw new HttpError(404, "no such mandate for this agent");
+      const m = (await deps.db.query("SELECT body, revoked_at FROM mandates WHERE mandate_id = $1 AND agent_id = $2", [id, req.agentId])).rows[0];
       if (!m) throw new HttpError(404, "no such mandate for this agent");
       const b = m.body;
       // The agent sees its scope, not the owner's signature or keys.
       return { mandate_id: b.mandate_id, intent: b.intent, allowed_categories: b.allowed_categories, budget: b.budget, per_order_cap_cents: b.per_order_cap_cents, approval_threshold_cents: b.approval_threshold_cents, max_units_per_line: b.max_units_per_line, valid_until: b.valid_until, revoked: !!m.revoked_at };
     });
-    agent.post("/api/agent/proposals", async (req) => submitProposal(deps, req.agentId!, req.body));
+    agent.post("/api/agent/proposals", { config: { rateLimit: { max: 120, timeWindow: "1 minute", keyGenerator: tokenKey } } }, async (req) => submitProposal(deps, req.agentId!, req.body, req.agentScope ?? null));
     agent.get("/api/agent/decisions/:id", async (req) => {
       const d = await getDecision(deps.db, (req.params as { id: string }).id);
+      const owner = (await deps.db.query("SELECT agent_id, mandate_id FROM decisions WHERE decision_id = $1", [d.decision_id])).rows[0];
+      if (owner.agent_id !== req.agentId || (req.agentScope && owner.mandate_id !== req.agentScope)) throw new HttpError(404, "unknown decision");
       const p = d.payment_id ? (await deps.db.query("SELECT state, approval FROM payments WHERE payment_id = $1", [d.payment_id])).rows[0] : null;
       return { ...d, payment_state: p?.state ?? null, approval: p?.approval ?? null };
     });
@@ -182,7 +214,7 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
         if (!a.target) throw new HttpError(400, "target mandate id required");
         const m = (await deps.db.query("SELECT owner_id FROM mandates WHERE mandate_id = $1", [a.target])).rows[0];
         if (!m || m.owner_id !== a.owner_id) throw new HttpError(404, "mandate not found for this owner");
-        return rt.start(a.target, opts.config.agentToken);
+        return rt.start(a.target, a.owner_id);
       });
       app.get("/api/demo/redteam/:runId", async (req) => rt.get((req.params as { runId: string }).runId));
       app.post("/api/demo/live", async (req) => {
@@ -190,7 +222,7 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
         const a = await verifyOwnerAction(deps, b, "redteam-run");
         const m = (await deps.db.query("SELECT owner_id FROM mandates WHERE mandate_id = $1", [a.target ?? ""])).rows[0];
         if (!m || m.owner_id !== a.owner_id) throw new HttpError(404, "mandate not found for this owner");
-        return rt.startLive(a.target!, opts.config.agentToken, String(b.task ?? "Do this week's restock."));
+        return rt.startLive(a.target!, a.owner_id, String(b.task ?? "Do this week's restock."));
       });
     }
   }

@@ -28,7 +28,14 @@ export interface LedgerVerification {
 
 /** Recompute the hash chain and check every signed checkpoint against it. */
 export async function verifyLedger(db: Db, gatewayPublicKeyHex: string): Promise<LedgerVerification> {
-  const entries = await readLedger(db);
+  // Page through the WHOLE ledger (review R5): a fixed limit would leave the tail unverified.
+  const entries: StoredLedgerEntry[] = [];
+  for (let from = 1; ; ) {
+    const page = await readLedger(db, from, 10_000);
+    entries.push(...page);
+    if (page.length < 10_000) break;
+    from = page[page.length - 1]!.seq + 1;
+  }
   const chain = verifyChain(entries);
   const bySeq = new Map(entries.map((e) => [e.seq, e.hash]));
   const cps = (await db.query<{ seq: number; hash: string; signed_at: string; signature: string }>("SELECT seq, hash, signed_at, signature FROM ledger_checkpoints ORDER BY seq")).rows;

@@ -8,7 +8,7 @@ import { checkpoint } from "./ledger.ts";
 import { PayPalProvider } from "./paypal.ts";
 import { ProviderRejectedError, type PaymentProvider } from "./provider.ts";
 import { createAgentRunner } from "./redteam.ts";
-import type { Deps } from "./service.ts";
+import { mintAgentToken, type Deps } from "./service.ts";
 
 /** Used when PayPal credentials are absent. It refuses every money operation; there is no simulated payment path. */
 const unconfiguredProvider: PaymentProvider = {
@@ -34,6 +34,7 @@ const unconfiguredProvider: PaymentProvider = {
 };
 
 const config = loadConfig();
+if (config.agentLlm && !process.env.AGENT_ANTHROPIC_API_KEY) console.warn("[leash] live agent shares the gateway LLM key; set AGENT_ANTHROPIC_API_KEY to a separate spend-capped key");
 const db = createPool(config.databaseUrl);
 await migrate(db);
 await seed(db, config.agentToken);
@@ -58,7 +59,7 @@ const app = await buildApp({
   deps,
   config: { ...config, paypalConfigured: !!config.paypal, llmConfigured: !!config.anthropic },
   drafter,
-  redteam: createAgentRunner({ gatewayUrl: `http://127.0.0.1:${config.port}`, anthropic: config.anthropic }),
+  redteam: createAgentRunner({ gatewayUrl: `http://127.0.0.1:${config.port}`, agentLlm: config.agentLlm, mint: (id) => mintAgentToken(db, id), maxActive: config.maxAgentRuns }),
 });
 
 // Sign a ledger checkpoint every minute (only when the head moved).

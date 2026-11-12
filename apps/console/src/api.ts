@@ -31,8 +31,9 @@ export function saveOwner(o: OwnerIdentity | null) {
   }
 }
 
-async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const r = await fetch(path, { method, headers: body === undefined ? {} : { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
+async function call<T>(method: string, path: string, body?: unknown, extraHeaders: Record<string, string> = {}): Promise<T> {
+  const headers: Record<string, string> = { ...extraHeaders, ...(body === undefined ? {} : { "content-type": "application/json" }) };
+  const r = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error((j as { error?: string }).error ?? `HTTP ${r.status}`);
   return j as T;
@@ -40,6 +41,12 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
 
 export const api = {
   get: <T,>(p: string) => call<T>("GET", p),
+  /** Owner-only reads carry a fresh signed "read" statement. */
+  getAsOwner: <T,>(p: string, o: OwnerIdentity) => {
+    const auth = ownerAction(o, "read");
+    const b64 = btoa(JSON.stringify(auth)).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+    return call<T>("GET", p, undefined, { "x-leash-auth": b64 });
+  },
   post: <T,>(p: string, b?: unknown) => call<T>("POST", p, b ?? {}),
 };
 

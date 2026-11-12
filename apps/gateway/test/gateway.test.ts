@@ -354,7 +354,7 @@ describe("G7: audit ledger", () => {
 describe("webhooks", () => {
   const evt = (id: string, type: string, resource: Record<string, unknown>) => JSON.stringify({ id, event_type: type, resource });
 
-  it("unverified webhooks are recorded but never change state", async () => {
+  it("unverified webhooks are refused and never change state", async () => {
     w = await makeWorld();
     const r = await w.propose({ mandate_id: w.mandateId, idempotency_key: key(), lines: BIG });
     await w.drain();

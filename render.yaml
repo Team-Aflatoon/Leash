@@ -14,6 +14,10 @@ services:
         generateValue: true
       - key: AGENT_TOKEN
         generateValue: true
+      - key: TRUST_PROXY_HOPS
+        value: "1"
+      - key: MAX_AGENT_RUNS
+        value: "3"
       - key: DEMO_MODE
         value: "true"
       - key: APPROVAL_TIMEOUT_SECONDS
@@ -27,6 +31,8 @@ services:
       - key: PAYPAL_WEBHOOK_ID
         sync: false
       - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: AGENT_ANTHROPIC_API_KEY
         sync: false
       - key: LLM_MODEL
         value: claude-opus-5-5

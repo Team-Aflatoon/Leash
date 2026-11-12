@@ -87,16 +87,31 @@ describe("PayPalProvider", () => {
     await expect(pp().capture({ requestId: "r", authorizationId: "AUTH", invoiceId: "x" })).rejects.toBeInstanceOf(ProviderUncertainError);
   });
 
-  it("void: already-voided is final, not an error", async () => {
+  it("void: already-voided/expired is a void; ALREADY_CAPTURED is NOT (review R3)", async () => {
     stubFetch(() => ({ status: 422, body: { details: [{ issue: "AUTHORIZATION_VOIDED" }] } }));
-    expect(await pp().voidAuthorization({ requestId: "r", authorizationId: "A" })).toEqual({ status: "ALREADY_FINAL" });
+    expect(await pp().voidAuthorization({ requestId: "r", authorizationId: "A" })).toEqual({ status: "VOIDED" });
+    stubFetch(() => ({ status: 422, body: { details: [{ issue: "AUTHORIZATION_ALREADY_CAPTURED" }] } }));
+    expect(await pp().voidAuthorization({ requestId: "r", authorizationId: "A" })).toEqual({ status: "ALREADY_CAPTURED" });
+  });
+
+  it("401 is uncertain (token refresh), not a definitive refusal (review R13)", async () => {
+    stubFetch(() => ({ status: 401, body: { name: "AUTHENTICATION_FAILURE" } }));
+    await expect(pp().authorize(req)).rejects.toBeInstanceOf(ProviderUncertainError);
+  });
+
+  it("webhook verification rejects a non-PayPal cert host before calling PayPal (review R6)", async () => {
+    const calls = stubFetch(() => ({ status: 200, body: { verification_status: "SUCCESS" } }));
+    const base = { "paypal-auth-algo": "x", "paypal-transmission-id": "t", "paypal-transmission-sig": "s", "paypal-transmission-time": new Date().toISOString() };
+    expect(await pp().verifyWebhook({ ...base, "paypal-cert-url": "https://evilpaypal.com/cert" }, "{}")).toBe(false);
+    expect(await pp().verifyWebhook({ ...base, "paypal-cert-url": "https://paypal.com.evil.io/cert" }, "{}")).toBe(false);
+    expect(calls.filter((c) => c.url.includes("verify-webhook"))).toHaveLength(0);
   });
 
   it("webhook verification posts the raw event bytes back unchanged", async () => {
     const calls = stubFetch(() => ({ status: 200, body: { verification_status: "SUCCESS" } }));
     const raw = '{"id":"WH-1","event_type":"PAYMENT.CAPTURE.COMPLETED","resource":{"amount":{"value":"86.40"}},"z":1.10}';
     const ok = await pp().verifyWebhook(
-      { "paypal-auth-algo": "SHA256withRSA", "paypal-cert-url": "https://api.sandbox.paypal.com/cert", "paypal-transmission-id": "t", "paypal-transmission-sig": "s", "paypal-transmission-time": "now" },
+      { "paypal-auth-algo": "SHA256withRSA", "paypal-cert-url": "https://api.sandbox.paypal.com/cert", "paypal-transmission-id": "t", "paypal-transmission-sig": "s", "paypal-transmission-time": new Date().toISOString() },
       raw,
     );
     expect(ok).toBe(true);

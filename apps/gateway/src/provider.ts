@@ -13,7 +13,11 @@ export interface PaymentProvider {
   /** Merchant-initiated order with intent AUTHORIZE against the vaulted wallet. No redirect. */
   authorize(req: AuthorizeRequest): Promise<AuthorizeResult>;
   capture(req: { requestId: string; authorizationId: string; invoiceId: string }): Promise<{ captureId: string; status: string }>;
-  voidAuthorization(req: { requestId: string; authorizationId: string }): Promise<{ status: "VOIDED" | "ALREADY_FINAL" }>;
+  /**
+   * VOIDED: the hold is released (now, or earlier, or it expired). ALREADY_CAPTURED: the money DID move — the caller
+   * must record a capture, never a void (review R3).
+   */
+  voidAuthorization(req: { requestId: string; authorizationId: string }): Promise<{ status: "VOIDED" | "ALREADY_CAPTURED" }>;
   verifyWebhook(headers: Record<string, string | undefined>, rawBody: string): Promise<boolean>;
 }
 

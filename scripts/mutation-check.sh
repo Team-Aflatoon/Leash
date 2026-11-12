@@ -30,6 +30,11 @@ mutate "G1 agent env not filtered"          apps/gateway/src/redteam.ts 'for (co
 mutate "G1 approval signature not checked"  apps/gateway/src/service.ts 'if (!owner || !verifyJson("approval"' 'if (false && !verifyJson("approval"' "cannot approve its own"
 mutate "G7 ledger trigger removed"          apps/gateway/migrations/001_init.sql 'CREATE TRIGGER ledger_no_update' '-- CREATE TRIGGER ledger_no_update' "refuses UPDATE"
 mutate "Webhook verification bypassed"      apps/gateway/src/service.ts 'if (!verified) throw new HttpError(400, "webhook signature not verified");' '' "never change state"
+mutate "R1 agent token scope ignored"        apps/gateway/src/service.ts 'const outOfScope = scopeMandateId !== null && scopeMandateId !== p.mandate_id;' 'const outOfScope = false;' "cannot spend against mandate B"
+mutate "R2 dashboard owner check removed"   apps/gateway/src/app.ts 'if (a.owner_id !== (req.params as { id: string }).id) throw new HttpError(403, "not your dashboard");' '' "requires the owner'"'"'s own signature"
+mutate "R3 already-captured read as void"   apps/gateway/src/service.ts 'if (res.status === "ALREADY_CAPTURED") {' 'if (false) {' "records a capture"
+mutate "R6 unverified webhooks stored"      apps/gateway/src/service.ts 'if (!verified) throw new HttpError(400, "webhook signature not verified");' 'if (!verified) { await deps.db.query("INSERT INTO webhook_events(event_id, event_type, verified, payload) VALUES ($1,$2,false,$3) ON CONFLICT DO NOTHING", [event.id, event.event_type, rawBody]); throw new HttpError(400, "webhook signature not verified"); }' "shadow genuine"
+mutate "R9 approval expiry unchecked"       apps/gateway/src/service.ts 'if (approved && p.approval_expires_at &&' 'if (false && p.approval_expires_at &&' "expired holds"
 
 echo; echo "killed $pass, survived/errored $fail"
 [ "$fail" -eq 0 ]

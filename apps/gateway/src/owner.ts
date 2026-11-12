@@ -1,7 +1,7 @@
 import { OwnerAction, periodStart, verifyJson } from "@leash/core";
 import { withTx } from "./db.ts";
 import { appendLedger } from "./ledger.ts";
-import { HttpError, type Deps } from "./service.ts";
+import { HttpError, ownerRef, type Deps } from "./service.ts";
 
 const MAX_AGE_MS = 5 * 60_000;
 
@@ -24,13 +24,15 @@ export async function startPayPalLink(deps: Deps, ownerId: string) {
   return { approve_url: s.approveUrl };
 }
 
-export async function finishPayPalLink(deps: Deps, ownerId: string) {
+export async function finishPayPalLink(deps: Deps, ownerId: string, returnedToken: string | null) {
   const o = (await deps.db.query("SELECT paypal_setup_token FROM owners WHERE owner_id = $1", [ownerId])).rows[0];
   if (!o?.paypal_setup_token) throw new HttpError(400, "no PayPal link in progress");
+  // Review R12: PayPal echoes the approved setup token on return; it must be the one this owner started.
+  if (returnedToken && returnedToken !== o.paypal_setup_token) throw new HttpError(400, "PayPal returned a different approval than the one started");
   const v = await deps.provider.finalizeVault({ requestId: `leash-vault-${o.paypal_setup_token}`, setupTokenId: o.paypal_setup_token });
   await withTx(deps.db, async (tx) => {
     await tx.query("UPDATE owners SET paypal_vault_id = $2, paypal_payer_email = $3, paypal_setup_token = NULL WHERE owner_id = $1", [ownerId, v.vaultId, v.payerEmail]);
-    await appendLedger(tx, "owner.paypal_linked", { owner_id: ownerId, vault_id_suffix: v.vaultId.slice(-4) }, deps.now());
+    await appendLedger(tx, "owner.paypal_linked", { owner_ref: ownerRef(ownerId), vault_id_suffix: v.vaultId.slice(-4) }, deps.now());
   });
 }
 

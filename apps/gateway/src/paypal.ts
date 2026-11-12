@@ -30,7 +30,8 @@ class HttpFailure extends Error {
     return this.body?.details?.[0]?.issue ?? this.body?.name ?? "";
   }
   get definitive(): boolean {
-    return this.status >= 400 && this.status < 500 && this.status !== 408 && this.status !== 429;
+    // 401 = our token expired/revoked mid-flight: outcome unknown, retry after refresh (review R13).
+    return this.status >= 400 && this.status < 500 && this.status !== 401 && this.status !== 408 && this.status !== 429;
   }
 }
 
@@ -162,7 +163,7 @@ export class PayPalProvider implements PaymentProvider {
               address_line_1: req.shipTo.line1,
               ...(req.shipTo.line2 ? { address_line_2: req.shipTo.line2 } : {}),
               admin_area_2: req.shipTo.city,
-              admin_area_1: req.shipTo.state,
+              ...(req.shipTo.state ? { admin_area_1: req.shipTo.state } : {}),
               postal_code: req.shipTo.postal_code,
               country_code: req.shipTo.country_code,
             },
@@ -214,7 +215,11 @@ export class PayPalProvider implements PaymentProvider {
       await this.call("POST", `/v2/payments/authorizations/${encodeURIComponent(req.authorizationId)}/void`, undefined, req.requestId);
       return { status: "VOIDED" as const };
     } catch (e) {
-      if (e instanceof HttpFailure && e.status === 422 && /VOIDED|ALREADY/i.test(e.issue)) return { status: "ALREADY_FINAL" as const };
+      if (e instanceof HttpFailure && e.status === 422) {
+        // Order matters: "AUTHORIZATION_ALREADY_CAPTURED" must never be read as a void (review R3).
+        if (/CAPTURED/i.test(e.issue)) return { status: "ALREADY_CAPTURED" as const };
+        if (/VOIDED|EXPIRED/i.test(e.issue)) return { status: "VOIDED" as const };
+      }
       return this.classify(e);
     }
   }
@@ -223,6 +228,15 @@ export class PayPalProvider implements PaymentProvider {
     if (!this.cfg.webhookId) return false;
     const h = (k: string) => headers[k] ?? "";
     if (!h("paypal-transmission-sig") || !h("paypal-cert-url")) return false;
+    // Cheap local checks before spending a PayPal API call on a possibly forged request (review R6).
+    try {
+      const cert = new URL(h("paypal-cert-url"));
+      if (cert.protocol !== "https:" || !(cert.hostname === "paypal.com" || cert.hostname.endsWith(".paypal.com"))) return false;
+    } catch {
+      return false;
+    }
+    const sent = Date.parse(h("paypal-transmission-time"));
+    if (!Number.isFinite(sent) || Math.abs(Date.now() - sent) > 3 * 86_400_000) return false;
     // P12: the event must be posted back exactly as received, so splice the raw bytes in rather than re-serialising.
     const prefix = JSON.stringify({
       auth_algo: h("paypal-auth-algo"),

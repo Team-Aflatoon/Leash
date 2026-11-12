@@ -12,6 +12,10 @@ export interface Config {
   gatewayPublicKeyHex: string;
   paypal: { clientId: string; clientSecret: string; webhookId: string | null; baseUrl: string } | null;
   anthropic: { apiKey: string; model: string } | null;
+  /** Key handed to the live agent process. Prefer a separate, spend-capped key (review R8). */
+  agentLlm: { apiKey: string; model: string } | null;
+  trustProxyHops: number | false;
+  maxAgentRuns: number;
 }
 
 function req(name: string): string {
@@ -47,5 +51,8 @@ export function loadConfig(env = process.env): Config {
     gatewayPublicKeyHex: publicKeyFromSecret(sk),
     paypal,
     anthropic: env.ANTHROPIC_API_KEY ? { apiKey: env.ANTHROPIC_API_KEY, model: env.LLM_MODEL ?? "claude-opus-5-5" } : null,
+    agentLlm: (env.AGENT_ANTHROPIC_API_KEY ?? env.ANTHROPIC_API_KEY) ? { apiKey: (env.AGENT_ANTHROPIC_API_KEY ?? env.ANTHROPIC_API_KEY)!, model: env.LLM_MODEL ?? "claude-opus-5-5" } : null,
+    trustProxyHops: env.TRUST_PROXY_HOPS ? Number(env.TRUST_PROXY_HOPS) : false,
+    maxAgentRuns: Number(env.MAX_AGENT_RUNS ?? 3),
   };
 }

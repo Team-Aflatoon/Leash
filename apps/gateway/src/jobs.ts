@@ -49,7 +49,9 @@ async function runOne(deps: Deps, job: JobRow): Promise<void> {
     const msg = e instanceof Error ? e.message : String(e);
     // Exponential backoff with the same idempotency keys on every retry. A payment stuck in RESERVED keeps its
     // budget reserved (fail-safe) until it resolves.
-    const giveUp = job.attempts >= MAX_ATTEMPTS;
+    // Money jobs never give up (review R7): giving up would strand a reservation or a live PayPal hold. They keep
+    // retrying with the same PayPal-Request-Id at most every 2 minutes; last_error makes them visible.
+    const giveUp = !job.kind.startsWith("payment.") && job.kind !== "approval.expire" && job.attempts >= MAX_ATTEMPTS;
     await deps.db.query(
       "UPDATE jobs SET locked_until = NULL, last_error = $2, run_at = now() + make_interval(secs => $3), done_at = CASE WHEN $4 THEN now() ELSE NULL END WHERE job_id = $1",
       [job.job_id, msg.slice(0, 500), Math.min(2 ** job.attempts, 120), giveUp],

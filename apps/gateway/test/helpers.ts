@@ -16,6 +16,7 @@ export class FakePayPal implements PaymentProvider {
   calls: { op: string; requestId: string; arg?: unknown }[] = [];
   authorizeBehaviour: "ok" | "decline" | "uncertain-once" | "uncertain" = "ok";
   captureBehaviour: "ok" | "reject" = "ok";
+  voidBehaviour: "ok" | "already_captured" = "ok";
   webhookValid = true;
   delayMs = 0;
   private byRequest = new Map<string, unknown>();
@@ -53,6 +54,7 @@ export class FakePayPal implements PaymentProvider {
   }
   async voidAuthorization(req: { requestId: string; authorizationId: string }) {
     this.calls.push({ op: "void", requestId: req.requestId, arg: req });
+    if (this.voidBehaviour === "already_captured") return { status: "ALREADY_CAPTURED" as const };
     return { status: "VOIDED" as const };
   }
   async verifyWebhook() {
@@ -124,7 +126,7 @@ export async function makeWorld(opts: { approvalTimeoutSeconds?: number; withInt
   const mandateId = await newMandate();
   const app = await buildApp({
     deps,
-    config: { agentToken: AGENT_TOKEN, gatewayPublicKeyHex: "00".repeat(32), gatewaySecretKeyHex: "11".repeat(32), demoMode: true, publicUrl: "http://localhost", paypalConfigured: false, llmConfigured: false },
+    config: { gatewayPublicKeyHex: "00".repeat(32), gatewaySecretKeyHex: "11".repeat(32), demoMode: true, publicUrl: "http://localhost", paypalConfigured: false, llmConfigured: false },
     drafter: { draft: async () => ({}) as never },
     rateLimit: false,
   });

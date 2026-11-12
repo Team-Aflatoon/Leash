@@ -101,7 +101,7 @@ export function MandateView({ owner, data, paypalConfigured, onChanged }: { owne
         <Section title="2 · Say what the agent may do">
           <textarea className="field h-28 resize-y" value={intent} onChange={(e) => setIntent(e.target.value)} maxLength={1000} />
           <div className="mt-3 flex items-center gap-3">
-            <button className="btn btn-primary" disabled={!!busy || !intent.trim()} onClick={() => run("draft", async () => setDraft(await api.post<Draft>("/api/mandates/draft", { intent, owner_id: owner.owner_id })))}>
+            <button className="btn btn-primary" disabled={!!busy || !intent.trim()} onClick={() => run("draft", async () => setDraft(await api.post<Draft>("/api/mandates/draft", { intent, ...ownerAction(owner, "draft") })))}>
               {busy === "draft" ? "Drafting…" : "Draft mandate"}
             </button>
             <span className="text-xs text-ink-400">An LLM turns your words into fields. You review every field before signing; the LLM never signs anything.</span>
