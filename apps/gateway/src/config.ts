@@ -11,11 +11,35 @@ export interface Config {
   gatewaySecretKeyHex: string;
   gatewayPublicKeyHex: string;
   paypal: { clientId: string; clientSecret: string; webhookId: string | null; baseUrl: string } | null;
-  anthropic: { apiKey: string; model: string } | null;
-  /** Key handed to the live agent process. Prefer a separate, spend-capped key (review R8). */
-  agentLlm: { apiKey: string; model: string } | null;
+  /** The LLM used by the gateway (intent check, mandate drafting). Null = rules only. */
+  llm: LlmConfig | null;
+  /** Credentials handed to the live agent process. Prefer a separate, spend-capped key (review R8). */
+  agentLlm: LlmConfig | null;
   trustProxyHops: number | false;
   maxAgentRuns: number;
+}
+
+export type LlmProvider = "gemini" | "anthropic";
+export interface LlmConfig {
+  provider: LlmProvider;
+  apiKey: string;
+  model: string;
+}
+
+const DEFAULT_MODEL: Record<LlmProvider, string> = { gemini: "gemini-flash-latest", anthropic: "claude-opus-5-5" };
+
+/** LLM_PROVIDER picks explicitly; otherwise Gemini when GEMINI_API_KEY is set, else Anthropic when its key is set. */
+export function pickLlm(env: NodeJS.ProcessEnv, forAgent: boolean): LlmConfig | null {
+  const keys: Record<LlmProvider, string | undefined> = {
+    gemini: (forAgent ? env.AGENT_GEMINI_API_KEY : undefined) ?? env.GEMINI_API_KEY,
+    anthropic: (forAgent ? env.AGENT_ANTHROPIC_API_KEY : undefined) ?? env.ANTHROPIC_API_KEY,
+  };
+  const explicit = env.LLM_PROVIDER as LlmProvider | undefined;
+  if (explicit && explicit !== "gemini" && explicit !== "anthropic") throw new Error("LLM_PROVIDER must be gemini or anthropic");
+  const provider: LlmProvider | null = explicit ?? (keys.gemini ? "gemini" : keys.anthropic ? "anthropic" : null);
+  if (!provider || !keys[provider]) return null;
+  const model = (provider === "gemini" ? env.GEMINI_MODEL : env.ANTHROPIC_MODEL) ?? env.LLM_MODEL ?? DEFAULT_MODEL[provider];
+  return { provider, apiKey: keys[provider]!, model };
 }
 
 function req(name: string): string {
@@ -50,8 +74,8 @@ export function loadConfig(env = process.env): Config {
     gatewaySecretKeyHex: sk,
     gatewayPublicKeyHex: publicKeyFromSecret(sk),
     paypal,
-    anthropic: env.ANTHROPIC_API_KEY ? { apiKey: env.ANTHROPIC_API_KEY, model: env.LLM_MODEL ?? "claude-opus-5-5" } : null,
-    agentLlm: (env.AGENT_ANTHROPIC_API_KEY ?? env.ANTHROPIC_API_KEY) ? { apiKey: (env.AGENT_ANTHROPIC_API_KEY ?? env.ANTHROPIC_API_KEY)!, model: env.LLM_MODEL ?? "claude-opus-5-5" } : null,
+    llm: pickLlm(env, false),
+    agentLlm: pickLlm(env, true),
     trustProxyHops: env.TRUST_PROXY_HOPS ? Number(env.TRUST_PROXY_HOPS) : false,
     maxAgentRuns: Number(env.MAX_AGENT_RUNS ?? 3),
   };

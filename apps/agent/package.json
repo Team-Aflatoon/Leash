@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "1.8.0",
+    "@google/genai": "2.32.0",
     "@leash/core": "workspace:*",
     "zod": "4.6.7"
   }

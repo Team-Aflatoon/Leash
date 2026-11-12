@@ -90,3 +90,23 @@ Regression coverage: the red-team test (6 concurrent orders while the worker aut
   at `medium` with the SDK tool runner (max 10 iterations).
 - The intent checker never sees product descriptions (merchant-controlled text), only titles, categories,
   quantities and prices the gateway resolved. The agent's note is passed as delimited, untrusted data.
+
+## D12. Gemini by default, Claude optional
+
+The team supplies a Gemini key. `LLM_PROVIDER` picks the adapter; by default it is Gemini when `GEMINI_API_KEY` is set.
+Both adapters implement the same `IntentChecker` and `MandateDrafter` interfaces and share the auditor prompt
+(`buildIntentPrompt`), and the live agent shares one set of tool definitions. Gemini output is constrained with a
+hand-written JSON schema (the supported subset: no nullable unions) and validated with zod. A safety block, a
+non-STOP finish, bad JSON or an HTTP or network error is an `error` verdict, which is a HOLD (fail closed, D7).
+SDK `@google/genai` is pinned to 2.32.0; 3.x was under two weeks old.
+
+## D13. Plan B payment consent: one approval per mandate (confirmed in the sandbox)
+
+PayPal refused Vault for both sandbox merchants (`NOT_ENABLED_TO_VAULT_PAYMENT_SOURCE`, SANDBOX_LOG). The brief's
+fallback, a one-time approval at mandate signing, was tested end to end against the real sandbox:
+- one `intent: AUTHORIZE` order for the monthly budget, approved once by the buyer;
+- `/authorize` gives a $400 authorization valid for 29 days;
+- partial captures with `final_capture: false` return COMPLETED, and the authorization ends PARTIALLY_CAPTURED;
+- a capture retried with the same `PayPal-Request-Id` returns the same capture;
+- voiding the remainder leaves the authorization VOIDED.
+Purchases still need no redirect. If Vault is enabled later, the Vault path is used unchanged.

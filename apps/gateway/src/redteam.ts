@@ -39,7 +39,7 @@ export interface RedTeamRunner {
 export interface RunnerOptions {
   gatewayUrl: string;
   /** LLM credentials handed to the LIVE agent only. Use a separate, spend-capped key (AGENT_ANTHROPIC_API_KEY). */
-  agentLlm: { apiKey: string; model: string } | null;
+  agentLlm: { provider: "gemini" | "anthropic"; apiKey: string; model: string } | null;
   /** Mint a per-run token scoped to one mandate (review R1). */
   mint: (mandateId: string) => Promise<string>;
   /** Global cap on concurrently running agent processes (review R4). */
@@ -106,7 +106,8 @@ export function createAgentRunner(opts: RunnerOptions): RedTeamRunner {
     },
     async startLive(mandateId, ownerId, task) {
       if (!opts.agentLlm) throw new HttpError(400, "live agent needs an LLM key");
-      return launch("live", mandateId, ownerId, { TASK: task.slice(0, 1000), ANTHROPIC_API_KEY: opts.agentLlm.apiKey, LLM_MODEL: opts.agentLlm.model });
+      const keyVar = opts.agentLlm.provider === "gemini" ? "GEMINI_API_KEY" : "ANTHROPIC_API_KEY";
+      return launch("live", mandateId, ownerId, { TASK: task.slice(0, 1000), LLM_PROVIDER: opts.agentLlm.provider, [keyVar]: opts.agentLlm.apiKey, LLM_MODEL: opts.agentLlm.model });
     },
     async get(runId) {
       const r = runs.get(runId);
