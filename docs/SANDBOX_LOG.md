@@ -22,3 +22,14 @@ Real PayPal sandbox runs, appended by `pnpm --filter @leash/gateway spike`.
 - Rechecked every 2 minutes 15:37 to 15:48: always 403.
 - Reading: Vault v3 isn't provisioned for this India-based sandbox merchant, whatever the checkbox says. Next step: a US
   sandbox business account with its own app (Vault ticked) and a US personal buyer.
+
+## 2026-11-12 16:20: new US setup (app APP-04219936CG633390X, US business + US personal)
+
+- OAuth: 200. The token now carries `vault/payment-tokens/readwrite` (the IN app never did).
+- `POST /v3/vault/setup-tokens` (paypal MERCHANT, paypal PLATFORM, card): all **403 NOT_AUTHORIZED**,
+  issue `NOT_ENABLED_TO_VAULT_PAYMENT_SOURCE` (debug_id f251846060492).
+- `POST /v2/checkout/orders` with `attributes.vault.store_in_vault: ON_SUCCESS`: **422**, same issue.
+- Reading: the app may vault, but the sandbox *merchant account* isn't enabled to. PayPal community threads report
+  the same, fixed only by PayPal enabling the account or after the account propagates
+  ([thread](https://www.paypal-community.com/t5/Sandbox-Environment/NOT-ENABLED-TO-VAULT-PAYMENT-SOURCE/m-p/3182847)).
+- Decision: keep watching Vault; build the brief's documented fallback (one approval per mandate) in parallel.
