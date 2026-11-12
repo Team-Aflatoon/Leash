@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { pickLlm } from "../src/config.ts";
-import { GeminiIntentChecker, GeminiMandateDrafter } from "../src/gemini.ts";
+import { GeminiIntentChecker, GeminiMandateDrafter, generateWithRetry } from "../src/gemini.ts";
 
 const input = {
   intent: "Restock café supplies.",
@@ -97,5 +97,43 @@ describe("LLM provider selection", () => {
     expect(pickLlm({ GEMINI_API_KEY: "g", AGENT_GEMINI_API_KEY: "agent" }, true)?.apiKey).toBe("agent");
     expect(pickLlm({}, false)).toBeNull();
     expect(() => pickLlm({ LLM_PROVIDER: "openai" }, false)).toThrow();
+  });
+});
+
+describe("Gemini retry and fallback", () => {
+
+  const fakeAi = (fail: (model: string, n: number) => Error | null) => {
+    const seen: string[] = [];
+    const ai = {
+      models: {
+        generateContent: async (p: { model: string }) => {
+          seen.push(p.model);
+          const e = fail(p.model, seen.length);
+          if (e) throw e;
+          return { text: "{}", modelVersion: p.model };
+        },
+      },
+    };
+    return { ai: ai as never, seen };
+  };
+  const noSleep = async () => {};
+
+  it("tries the primary, then each fallback, then the primary again on 503s", async () => {
+    const { ai, seen } = fakeAi(() => new Error('{"error":{"code":503,"status":"UNAVAILABLE"}}'));
+    await expect(generateWithRetry(ai, "primary", { contents: "x" }, { fallbackModels: ["a", "b"], sleep: noSleep })).rejects.toThrow(/503/);
+    expect(seen).toEqual(["primary", "a", "b", "primary"]);
+  });
+
+  it("stops at the first model that answers", async () => {
+    const { ai, seen } = fakeAi((m) => (m === "primary" ? new Error("This model is currently experiencing high demand") : null));
+    const r = (await generateWithRetry(ai, "primary", { contents: "x" }, { fallbackModels: ["a", "b"], sleep: noSleep })) as { modelVersion: string };
+    expect(r.modelVersion).toBe("a");
+    expect(seen).toEqual(["primary", "a"]);
+  });
+
+  it("does not retry a non-transient error (bad request, auth)", async () => {
+    const { ai, seen } = fakeAi(() => new Error('{"error":{"code":400,"status":"INVALID_ARGUMENT"}}'));
+    await expect(generateWithRetry(ai, "primary", { contents: "x" }, { fallbackModels: ["a"], sleep: noSleep })).rejects.toThrow(/400/);
+    expect(seen).toEqual(["primary"]);
   });
 });

@@ -44,3 +44,14 @@ Real PayPal sandbox runs, appended by `pnpm --filter @leash/gateway spike`.
 - authorization after captures: PARTIALLY_CAPTURED
 - void the remainder: HTTP 200  ""
 - authorization after void: VOIDED
+
+## 2026-11-12: first real Gemini calls (free-tier key)
+
+- Models listed for the key include `gemini-flash-latest`, `gemini-3.x-flash`, `gemini-3.1-flash-lite`; `gemini-2.5-*` is
+  closed to new users (404).
+- Capacity was poor across models (503 "high demand", 429 on `gemini-pro-latest`, timeouts), changing from minute to minute.
+- With retry plus fallback models (`gemini-3.6-flash`, `gemini-3.1-flash-lite`), live results:
+  - honest café cart → **consistent**;
+  - mandate drafted from plain English → **$400 / $250 / $150**, exactly as stated;
+  - injected agent note → **suspicious** on one run; on another run every model attempt was overloaded, and the
+    checker returned `error`, a HOLD (fail closed).

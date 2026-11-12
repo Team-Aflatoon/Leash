@@ -20,6 +20,37 @@ const INTENT_SCHEMA = {
   required: ["verdict", "rationale"],
 };
 
+/**
+ * Gemini capacity errors (503 "high demand", 429) and timeouts are common and transient. Try the configured model
+ * twice with backoff, then a lighter fallback model. Anything else, or exhausting the attempts, throws: callers fail
+ * closed.
+ */
+/** Tried in order after the configured model when it is overloaded. Override with GEMINI_FALLBACK_MODELS. */
+export const GEMINI_FALLBACK_MODELS = (process.env.GEMINI_FALLBACK_MODELS ?? "gemini-3.6-flash,gemini-3.1-flash-lite").split(",").map((m) => m.trim()).filter(Boolean);
+const transient = (e: unknown) =>
+  /\b(503|429|500|UNAVAILABLE|RESOURCE_EXHAUSTED|aborted|fetch failed|ECONNRESET)\b|high demand|timed? ?out/i.test(String((e as Error)?.message ?? e));
+
+export async function generateWithRetry(
+  ai: GoogleGenAI,
+  model: string,
+  params: Omit<Parameters<GoogleGenAI["models"]["generateContent"]>[0], "model">,
+  opts: { timeoutMs?: number; fallbackModels?: string[]; sleep?: (ms: number) => Promise<void> } = {},
+) {
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const plan = [model, ...(opts.fallbackModels ?? GEMINI_FALLBACK_MODELS).filter((m) => m !== model), model];
+  let last: unknown;
+  for (let i = 0; i < plan.length; i++) {
+    try {
+      return await ai.models.generateContent({ ...params, model: plan[i]!, config: { ...params.config, abortSignal: AbortSignal.timeout(opts.timeoutMs ?? 20_000) } });
+    } catch (e) {
+      last = e;
+      if (!transient(e)) throw e;
+      if (i < plan.length - 1) await sleep(1000 * (i + 1));
+    }
+  }
+  throw last;
+}
+
 function blocked(res: { promptFeedback?: { blockReason?: unknown }; candidates?: { finishReason?: unknown }[] }): string | null {
   if (res.promptFeedback?.blockReason) return `prompt blocked (${String(res.promptFeedback.blockReason)})`;
   const fr = res.candidates?.[0]?.finishReason;
@@ -36,10 +67,9 @@ export class GeminiIntentChecker implements IntentChecker {
 
   async check(input: IntentCheckInput): Promise<IntentVerdict> {
     try {
-      const res = await this.ai.models.generateContent({
-        model: this.model,
+      const res = await generateWithRetry(this.ai, this.model, {
         contents: buildIntentPrompt(input),
-        config: { systemInstruction: INTENT_SYSTEM, responseMimeType: "application/json", responseJsonSchema: INTENT_SCHEMA, temperature: 0, abortSignal: AbortSignal.timeout(45_000) },
+        config: { systemInstruction: INTENT_SYSTEM, responseMimeType: "application/json", responseJsonSchema: INTENT_SCHEMA, temperature: 0 },
       });
       const why = blocked(res);
       if (why) return { kind: "error", error: why };
@@ -99,11 +129,15 @@ export class GeminiMandateDrafter implements MandateDrafter {
   async draft(intent: string): Promise<MandateDraft> {
     let d: z.infer<typeof DraftOut> | null = null;
     try {
-      const res = await this.ai.models.generateContent({
-        model: this.model,
-        contents: `<owner_instructions>\n${intent}\n</owner_instructions>`,
-        config: { systemInstruction: DRAFT_SYSTEM, responseMimeType: "application/json", responseJsonSchema: DRAFT_SCHEMA, temperature: 0, abortSignal: AbortSignal.timeout(60_000) },
-      });
+      const res = await generateWithRetry(
+        this.ai,
+        this.model,
+        {
+          contents: `<owner_instructions>\n${intent}\n</owner_instructions>`,
+          config: { systemInstruction: DRAFT_SYSTEM, responseMimeType: "application/json", responseJsonSchema: DRAFT_SCHEMA, temperature: 0 },
+        },
+        { timeoutMs: 30_000 },
+      );
       if (!blocked(res)) {
         const p = DraftOut.safeParse(JSON.parse(res.text ?? ""));
         if (p.success) d = p.data;

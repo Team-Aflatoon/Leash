@@ -76,13 +76,30 @@ function makeTools(client: GatewayClient, runId: string, out: Out) {
   ];
 }
 
+/** Gemini capacity errors are common and transient: try the model, then fallbacks, then the model again. */
+async function withRetry<T>(call: (model: string) => Promise<T>, model: string): Promise<T> {
+  const fallbacks = (process.env.GEMINI_FALLBACK_MODELS ?? "gemini-3.6-flash,gemini-3.1-flash-lite").split(",").map((m) => m.trim()).filter((m) => m && m !== model);
+  const plan = [model, ...fallbacks, model];
+  let last: unknown;
+  for (let i = 0; i < plan.length; i++) {
+    try {
+      return await call(plan[i]!);
+    } catch (e) {
+      last = e;
+      if (!/\b(503|429|500|UNAVAILABLE|RESOURCE_EXHAUSTED|aborted|fetch failed)\b|high demand|timed? ?out/i.test(String((e as Error)?.message ?? e))) throw e;
+      await new Promise((r) => setTimeout(r, 1000 * (i + 1)));
+    }
+  }
+  throw last;
+}
+
 export async function runShopperGemini(client: GatewayClient, task: string, apiKey: string, model: string, runId: string, out: Out) {
   const tools = makeTools(client, runId, out);
   const ai = new GoogleGenAI({ apiKey });
   const declarations: FunctionDeclaration[] = tools.map((t) => ({ name: t.name, description: t.description, parametersJsonSchema: t.json }));
   const contents: Content[] = [{ role: "user", parts: [{ text: task }] }];
   for (let step = 0; step < MAX_STEPS; step++) {
-    const res = await ai.models.generateContent({ model, contents, config: { systemInstruction: SYSTEM, tools: [{ functionDeclarations: declarations }] } });
+    const res = await withRetry((m) => ai.models.generateContent({ model: m, contents, config: { systemInstruction: SYSTEM, tools: [{ functionDeclarations: declarations }], abortSignal: AbortSignal.timeout(30_000) } }), model);
     const calls = res.functionCalls ?? [];
     const turn = res.candidates?.[0]?.content;
     if (!calls.length || !turn) {
