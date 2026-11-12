@@ -16,7 +16,7 @@ points at real files or commands. Items marked **YOU** need the owner's accounts
 | Optional sponsor: Channel3 | Not used | Deliberate: avoids real brand images in the video (brief, section 3) |
 
 ## Before submitting
-- [ ] `pnpm typecheck && pnpm test` green; `bash scripts/mutation-check.sh` → 11/11 killed
+- [ ] `pnpm typecheck && pnpm test` green; `bash scripts/mutation-check.sh` → 16/16 killed; `npx tsx scripts/smoke.ts <demo-url>` → 6/6 once PayPal is linked
 - [ ] Spike run recorded in `docs/SANDBOX_LOG.md` with "P4 CONFIRMED"
 - [ ] Hosted demo: create owner → link PayPal → Run red team → 6/6
 - [ ] Webhook registered; a capture shows "CONFIRMED" in the Decisions grid's Webhook column

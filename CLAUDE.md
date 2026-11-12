@@ -27,7 +27,8 @@ Status and next steps: `PROGRESS.md`. Why things are the way they are: `docs/DEC
 - Lock mandates/payments with `FOR NO KEY UPDATE`; `appendLedger` is the last statement of a transaction
   (DECISIONS D10 — a deadlock happened when this was violated).
 - No fake payment provider outside `apps/gateway/test/`. Without creds the server uses a refusing provider.
-- Each security claim has a test (map in `docs/SECURITY.md`). If you change a guard, run the suite and the
+- Agent tokens are per-run and scoped to one mandate (`mintAgentToken`); the ledger carries no PII (`ownerRef`).
+- Each security claim has a test (map in `docs/SECURITY.md`, review fixes in `docs/REVIEW.md`). If you change a guard, run the suite and the
   mutation checks in `scripts/mutation-check.sh`.
 
 ## Conventions

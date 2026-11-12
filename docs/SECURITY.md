@@ -22,11 +22,12 @@ calls from a job queue using deterministic idempotency keys. Every step is appen
 ## Guarantees → tests
 
 Each test below fails if its guarantee breaks. `scripts/mutation-check.sh` removes each guard in turn and confirms
-the test fails (last run: **11 of 11 mutants killed**, 0 survived, 0 non-compiling).
+the test fails (last run: **16 of 16 mutants killed**, 0 survived, 0 non-compiling). An independent adversarial review found 13
+more issues; they are fixed and regression-tested, see [REVIEW.md](REVIEW.md).
 
 | # | Guarantee | Mechanism | Test(s) | Mutation killed |
 |---|-----------|-----------|---------|-----------------|
-| G1 | Agent can't touch money, DB or credentials | Separate process, env allowlist (`agentEnv`), HTTP-only client, bearer token maps to an agent id with propose-only routes | `agent.test.ts` "imports nothing from the gateway…", "environment is an allowlist without secrets"; `gateway.test.ts` "rejects missing or wrong agent tokens" | agent env not filtered |
+| G1 | Agent can't touch money, DB or credentials | Separate process, env allowlist (`agentEnv`), HTTP-only client, per-run token scoped to one mandate with expiry, propose-only routes | `agent.test.ts` "imports nothing from the gateway…", "environment is an allowlist without secrets"; `gateway.test.ts` "rejects missing or wrong agent tokens" | agent env not filtered |
 | G1 | Agent can't release held money | Approvals are Ed25519-signed by the owner key (browser only), verified per request; CAS on `approval = 'PENDING'` | "cannot approve its own held payment", "owner-signed approval cannot be replayed to capture twice" | approval signature not checked |
 | G2 | Gateway derives price, merchant, category, quantity limits, address | `evaluateRules` prices from the catalog; agent claims only compared (mismatch = BLOCK); PayPal order built from gateway-resolved lines and the mandate's `ship_to` | core "blocks a claimed price…", "blocks any ship-to…"; gateway "blocks a lowballed price claim and never sends it to PayPal", "blocks a redirected shipping address", "ALLOW → … ship-to sent to PayPal is the mandate's" | address lock disabled; price claim ignored |
 | G3 | LLM can only tighten | `combine()` folds verdicts with `max(severity)`; LLM not called when rules BLOCK; LLM error/refusal = HOLD | core "G3" matrix (3 outcomes × 5 verdicts); gateway "suspicious verdict turns ALLOW into HOLD", "LLM failure fails closed", "'consistent' cannot unblock" | LLM may loosen |
@@ -63,6 +64,13 @@ injection, and the deterministic rules stop it.
   stronger anchoring.
 - The owner key lives in browser storage. That is fine for a demo, but production would use WebAuthn or a hardware
   key.
-- Read endpoints (`/api/owners/:id/dashboard`, `/api/ledger`) are unauthenticated in this single-tenant demo.
-  Owner ids are random, and every **state-changing** owner action requires the owner's signature.
+- The dashboard requires a fresh owner signature. The ledger is public **by design** so anyone can verify it, and it
+  therefore holds only commitments (`owner_ref`, `body_hash`), mandate ids, outcomes and amounts. It never holds
+  addresses, emails or mandate bodies.
+- The agent runs as a separate process with no secrets in its environment, but in the same container and under the
+  same OS user. Code execution inside the agent could read the parent process's environment on Linux. The live
+  agent has only three HTTP tools and no code execution. For production, run it in its own container or uid, and
+  give it its own spend-capped LLM key (`AGENT_ANTHROPIC_API_KEY`).
+- Payment jobs retry forever by design. A stuck job is visible through `last_error`, and its budget stays reserved,
+  which fails safe.
 - Sandbox only: `PayPalProvider` refuses a non-sandbox base URL.

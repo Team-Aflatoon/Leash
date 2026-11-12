@@ -18,7 +18,7 @@ console's dark theme. Before recording: link the sandbox buyer and do one red-te
 | 2:08–2:25 | Card 6, then the Overview tab: budget bar and pending approval | "And a runaway loop fires six orders at once. Postgres row locks serialise them: one placed, one duplicate held for Maya, four blocked. Never over four hundred. Maya approves or rejects the held one with her key. Rejecting voids the PayPal authorization." |
 | 2:25–2:38 | Ledger tab: the green "Chain intact" line, then Decisions grid detail | "Every decision is in a hash-chained ledger with signed checkpoints, reconciled against PayPal webhooks. Edit any row and verification fails." |
 | 2:38–2:45 | Overview: click **Pull the leash** | "And if anything feels off, one click revokes the mandate. Holds are voided and the agent is cut off immediately." |
-| 2:45–2:55 | End card: repo URL and "88 tests · 11/11 mutants killed · PayPal sandbox" | "Rules decide. AI can only make them stricter. And every payment has a receipt you can prove. That's Leash." |
+| 2:45–2:55 | End card: repo URL and "102 tests · 16/16 mutants killed · PayPal sandbox" | "Rules decide. AI can only make them stricter. And every payment has a receipt you can prove. That's Leash." |
 
 ## Shot checklist
 - [ ] Browser zoom 110%, hide bookmarks bar, no personal tabs.
