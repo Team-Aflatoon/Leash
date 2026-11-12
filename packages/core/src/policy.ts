@@ -36,6 +36,7 @@ export type ReasonCode =
   | "CATEGORY_MISMATCH"
   | "MERCHANT_MISMATCH"
   | "IDEMPOTENCY_CONFLICT"
+  | "MALFORMED_REQUEST"
   // escalations
   | "OVER_APPROVAL_THRESHOLD"
   | "DUPLICATE_SUSPECTED"
@@ -196,7 +197,9 @@ export function evaluateRules(input: RuleInput): RuleResult {
 
 export type IntentVerdict =
   | { kind: "not_configured" }
-  | { kind: "consistent"; rationale: string }
+  /** Rules already blocked, so the LLM was not consulted. */
+  | { kind: "skipped" }
+  | { kind: "consistent"; rationale: string; cached?: boolean }
   | { kind: "suspicious"; rationale: string }
   | { kind: "error"; error: string };
 

@@ -187,6 +187,7 @@ describe("G3: LLM verdict can only tighten", () => {
   const outcomes: Outcome[] = ["ALLOW", "HOLD", "BLOCK"];
   const verdicts: IntentVerdict[] = [
     { kind: "not_configured" },
+    { kind: "skipped" },
     { kind: "consistent", rationale: "fine" },
     { kind: "suspicious", rationale: "off-intent" },
     { kind: "error", error: "timeout" },
@@ -198,7 +199,7 @@ describe("G3: LLM verdict can only tighten", () => {
         const r = combine({ outcome: o, reasons: [] }, v);
         expect(rank[r.outcome]).toBeGreaterThanOrEqual(rank[o]);
         if (v.kind === "suspicious" || v.kind === "error") expect(rank[r.outcome]).toBeGreaterThanOrEqual(rank.HOLD);
-        if (v.kind === "consistent" || v.kind === "not_configured") expect(r.outcome).toBe(o);
+        if (v.kind === "consistent" || v.kind === "not_configured" || v.kind === "skipped") expect(r.outcome).toBe(o);
       });
 });
 

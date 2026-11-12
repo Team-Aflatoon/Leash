@@ -32,7 +32,7 @@ export function publicKeyFromSecret(secretKeyHex: string): string {
  * Domain-separated signing: the signed message is `leash:<purpose>:v1\n<canonical json>`, so a signature over a
  * mandate can never be replayed as an approval or a revocation.
  */
-export type SignPurpose = "mandate" | "approval" | "revocation" | "ledger-checkpoint";
+export type SignPurpose = "mandate" | "approval" | "revocation" | "ledger-checkpoint" | "owner-action";
 
 function message(purpose: SignPurpose, value: unknown): Uint8Array {
   return utf8ToBytes(`leash:${purpose}:v1\n${canonicalize(value)}`);

@@ -85,6 +85,17 @@ export const RevocationStatement = z
   .strict();
 export type RevocationStatement = z.infer<typeof RevocationStatement>;
 
+/** Signed by the owner for console actions that change state but aren't mandates/approvals/revocations. */
+export const OwnerAction = z
+  .object({
+    owner_id: shortText(64),
+    action: z.enum(["paypal-link", "demo-reset", "redteam-run"]),
+    target: z.string().max(64).optional(),
+    signed_at: isoDate,
+  })
+  .strict();
+export type OwnerAction = z.infer<typeof OwnerAction>;
+
 export interface CatalogItem {
   sku: string;
   title: string;
