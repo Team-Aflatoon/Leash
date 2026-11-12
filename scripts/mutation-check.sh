@@ -11,6 +11,8 @@ mutate() {
   node -e 'const fs=require("fs");const [f,a,b]=process.argv.slice(1);fs.writeFileSync(f,fs.readFileSync(f,"utf8").split(a).join(b))' "$file" "$from" "$to"
   if npx vitest run -t "$test" >/tmp/leash-mut.log 2>&1; then
     echo "SURVIVED  $name  (test '$test' still passes — guard is untested!)"; fail=$((fail+1))
+  elif grep -qE "SyntaxError|Transform failed|ERR_MODULE" /tmp/leash-mut.log; then
+    echo "ERRORED   $name  (mutant did not compile; not a valid kill)"; fail=$((fail+1))
   else
     echo "killed    $name"; pass=$((pass+1))
   fi
