@@ -52,12 +52,12 @@ export function App() {
 
   return (
     <div className="mx-auto max-w-[1440px] px-4 pb-16 md:px-6">
-      <header className="flex flex-col gap-3 border-b border-ink-700 py-4 md:flex-row md:items-center md:justify-between">
+      <header className="flex flex-col gap-3 py-4 md:flex-row md:items-center md:justify-between">
         <div className="flex items-center gap-3">
           <Logo />
           <div>
             <div className="text-lg font-semibold leading-tight">Leash</div>
-            <div className="text-xs text-ink-400">Spending gateway for AI agents · {data?.owner.display_name ?? owner.display_name}</div>
+            <div className="text-sm text-dim">{data?.owner.display_name ?? owner.display_name}</div>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -70,16 +70,16 @@ export function App() {
         </div>
       </header>
 
-      <nav className="mt-4 flex gap-1 overflow-x-auto" role="tablist">
+      <nav className="flex gap-1 overflow-x-auto border-b border-line" role="tablist">
         {TABS.map((t) => (
-          <button key={t} role="tab" aria-selected={tab === t} onClick={() => setTab(t)} className={`whitespace-nowrap rounded-lg px-3.5 py-2 text-sm font-medium transition ${tab === t ? "bg-ink-800 text-ink-100" : "text-ink-400 hover:text-ink-100"}`}>
+          <button key={t} role="tab" aria-selected={tab === t} onClick={() => setTab(t)} className={`whitespace-nowrap border-b-2 px-3 py-2.5 text-sm font-medium transition-colors ${tab === t ? "border-amber text-fg" : "border-transparent text-dim hover:text-fg"}`}>
             {t}
           </button>
         ))}
       </nav>
 
-      <main className="mt-5 space-y-4">
-        {banner && <div className="rounded-lg border border-accent/40 bg-accent/10 px-3 py-2 text-sm text-accent">{banner}</div>}
+      <main className="mt-6 space-y-4">
+        {banner && <div className="rounded-lg border border-blue/40 bg-blue/10 px-3 py-2 text-sm text-blue">{banner}</div>}
         <ErrorNote error={error} />
         {!data ? (
           <p className="text-sm text-ink-400">Loading…</p>
@@ -100,12 +100,7 @@ export function App() {
 }
 
 function Pill({ ok, label }: { ok: boolean; label: string }) {
-  return (
-    <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 ${ok ? "border-allow/30 text-allow" : "border-ink-600 text-ink-400"}`}>
-      <span className={`h-1.5 w-1.5 rounded-full ${ok ? "bg-allow" : "bg-ink-400"}`} />
-      {label}
-    </span>
-  );
+  return <span className={`chip ${ok ? "chip-allow" : ""}`}>{label}</span>;
 }
 
 function Logo() {
@@ -128,9 +123,9 @@ function Onboarding({ onReady, config }: { onReady: (o: OwnerIdentity) => void; 
         <Logo />
         <span className="text-xl font-semibold">Leash</span>
       </div>
-      <h1 className="text-3xl font-semibold leading-tight">Let an AI agent spend money, inside limits it can't talk its way around.</h1>
+      <h1 className="text-3xl font-semibold leading-tight">Let an AI agent spend money, inside limits it can’t talk its way around.</h1>
       <p className="mt-3 text-ink-300">
-        You'll get an owner key, generated in this browser. It signs your spending mandates and approvals. The gateway only ever sees the public half, so nobody else, including the
+        You’ll get an owner key, generated in this browser. It signs your spending mandates and approvals. The gateway only ever sees the public half, so nobody else, including the
         gateway and the agent, can sign as you.
       </p>
       <label className="mt-6 block">

@@ -68,7 +68,7 @@ export function LiveAgent({ owner, data, llm, onChanged }: { owner: OwnerIdentit
               <li key={i} className="rise rounded-lg border border-ink-700 bg-ink-950 p-3 text-sm">
                 {e.type === "tool" && (
                   <>
-                    <div className="mono text-xs text-accent">→ {e.name}</div>
+                    <div className="mono text-xs text-blue">→ {e.name}</div>
                     <pre className="mono mt-1 overflow-auto text-[11px] text-ink-300">{JSON.stringify(e.input)}</pre>
                     {e.name === "propose_order" && e.result?.outcome ? (
                       <div className="mt-2 flex flex-wrap items-center gap-2">

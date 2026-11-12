@@ -1,37 +1,105 @@
+/* Hallmark · shape: app screen · genre: modern-minimal · theme: Console (deal 3/3, seed security-console-payments-gateway-4825·32febfaf·2026-11-12·r0) · redesign: full
+ * nav: top bar with tabs (kept) · signature: the attack log, one record per attempt with the money it moved · states: idle, running, done, error · console: graphite
+ * axes: dark/grotesk-sans/chromatic-amber · posture: restrained · contrast: pass · v2.0.0 */
+/* Hallmark · pre-emit critique: P2 H2 E2 S2 R2 V2 · weakest: R, six scenarios read as six cards; recomposed as one log panel with seams */
 @import "tailwindcss";
+@import "./tokens.css";
+@import "./base.css" layer(base);
 
-@theme {
-  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
-  --color-ink-950: #070b14;
-  --color-ink-900: #0b1220;
-  --color-ink-850: #0f1829;
-  --color-ink-800: #142036;
-  --color-ink-700: #1e2d47;
-  --color-ink-600: #2c3d5c;
-  --color-ink-400: #7d8ba6;
-  --color-ink-300: #a7b2c7;
-  --color-ink-100: #e6ebf3;
-  --color-allow: #34d399;
-  --color-hold: #fbbf24;
-  --color-block: #f87171;
-  --color-accent: #60a5fa;
+/* Tailwind utilities read the Console tokens; no colour literal lives past tokens.css. */
+@theme inline {
+  --font-sans: var(--font-body);
+  --font-mono: var(--font-outlier);
+  --color-ground: var(--color-paper);
+  --color-panel: var(--color-paper-2);
+  --color-well: var(--color-paper-3);
+  --color-fg: var(--color-ink);
+  --color-fg-2: var(--color-ink-2);
+  --color-dim: var(--color-muted);
+  --color-line: var(--color-rule);
+  --color-line-2: var(--color-rule-2);
+  --color-amber: var(--color-accent);
+  --color-amber-ink: var(--color-accent-ink);
+  --color-amber-soft: var(--color-accent-soft);
+  --color-blue: var(--color-cool);
+  --color-blue-soft: var(--color-cool-soft);
+  --color-good: var(--color-ok);
+  --color-good-soft: var(--color-ok-soft);
+  --color-stop: var(--color-bad);
+  --color-stop-soft: var(--color-bad-soft);
+  /* Aliases for screens not yet recomposed (pilot gate): same tokens, old names. */
+  --color-ink-950: var(--color-paper-3);
+  --color-ink-900: var(--color-paper-2);
+  --color-ink-850: var(--color-paper-2);
+  --color-ink-800: var(--color-paper);
+  --color-ink-700: var(--color-rule);
+  --color-ink-600: var(--color-rule-2);
+  --color-ink-400: var(--color-muted);
+  --color-ink-300: var(--color-ink-2);
+  --color-ink-100: var(--color-ink);
+  --color-allow: var(--color-ok);
+  --color-hold: var(--color-accent);
+  --color-block: var(--color-bad);
 }
 
-html, body { background: var(--color-ink-950); color: var(--color-ink-100); }
-body { font-family: var(--font-sans); -webkit-font-smoothing: antialiased; }
-.mono { font-family: var(--font-mono); }
-.card { background: var(--color-ink-900); border: 1px solid var(--color-ink-700); border-radius: 12px; }
-.btn { display:inline-flex; align-items:center; gap:.5rem; border-radius:8px; padding:.5rem .9rem; font-weight:600; font-size:.875rem; transition: background .15s, opacity .15s; }
-.btn:disabled { opacity:.45; cursor:not-allowed; }
-.btn-primary { background:#e6ebf3; color:#070b14; }
-.btn-primary:hover:not(:disabled) { background:#fff; }
-.btn-ghost { border:1px solid var(--color-ink-600); color: var(--color-ink-100); }
-.btn-ghost:hover:not(:disabled) { background: var(--color-ink-800); }
-.btn-danger { background: #7f1d1d; color:#fee2e2; border:1px solid #b91c1c; }
-.btn-danger:hover:not(:disabled) { background:#991b1b; }
-.field { background: var(--color-ink-950); border:1px solid var(--color-ink-600); border-radius:8px; padding:.45rem .6rem; font-size:.875rem; color: var(--color-ink-100); width:100%; }
-.field:focus { outline: 2px solid var(--color-accent); outline-offset: -1px; }
-.label { font-size:.7rem; letter-spacing:.08em; text-transform:uppercase; color: var(--color-ink-400); font-weight:600; }
-@keyframes rise { from { opacity:0; transform: translateY(6px);} to { opacity:1; transform:none; } }
-.rise { animation: rise .35s ease-out both; }
+.mono { font-family: var(--font-outlier); font-variant-numeric: tabular-nums slashed-zero; }
+.card { background: var(--color-paper-2); color: var(--color-ink); border: var(--rule-hair) solid var(--color-rule); border-radius: var(--radius-card); }
+.label { font-size: var(--text-sm); font-weight: 500; color: var(--color-muted); }
+
+/* Controls: the pair (amber fill for the one primary action, outline for the rest), eight states each. */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--space-xs);
+  min-height: 36px; padding: var(--space-xs) var(--space-md);
+  border: var(--rule-hair) solid var(--color-rule-2); border-radius: var(--radius-pill);
+  background: var(--color-paper-2); color: var(--color-ink);
+  font-weight: 500; font-size: var(--text-sm); line-height: 1.2; white-space: nowrap; cursor: pointer;
+  transition: background-color var(--dur-micro) var(--ease-out), border-color var(--dur-micro) var(--ease-out), color var(--dur-micro) var(--ease-out);
+}
+.btn:hover:not(:disabled) { background: var(--color-paper); border-color: var(--color-muted); }
+.btn:active:not(:disabled) { background: var(--color-paper-3); }
+.btn:disabled { cursor: not-allowed; color: var(--color-muted); border-color: var(--color-rule); background: var(--color-paper-2); }
+.btn[aria-busy="true"] { cursor: progress; }
+
+.btn-primary { background: var(--color-accent); border-color: var(--color-accent); color: var(--color-accent-ink); }
+.btn-primary:hover:not(:disabled) { background: color-mix(in oklab, var(--color-accent) 88%, var(--color-ink)); border-color: var(--color-accent); }
+.btn-primary:active:not(:disabled) { background: color-mix(in oklab, var(--color-accent) 80%, var(--color-paper-3)); }
+.btn-primary:disabled { background: var(--color-accent-soft); border-color: var(--color-accent-soft); color: var(--color-muted); }
+.btn-danger { border-color: var(--color-bad); color: var(--color-bad); }
+.btn-danger:hover:not(:disabled) { background: var(--color-bad-soft); border-color: var(--color-bad); }
+.btn-danger:active:not(:disabled) { background: color-mix(in oklab, var(--color-bad-soft) 70%, var(--color-paper-3)); }
+.btn-lg { min-height: 44px; padding: var(--space-sm) var(--space-lg); font-size: var(--text-md); }
+
+.field {
+  width: 100%; min-height: 36px; padding: var(--space-xs) var(--space-sm);
+  background: var(--color-paper-3); color: var(--color-ink);
+  border: var(--rule-hair) solid var(--color-rule); border-radius: var(--radius-pill); font-size: var(--text-sm);
+  transition: border-color var(--dur-micro) var(--ease-out);
+}
+.field:hover { border-color: var(--color-rule-2); }
+.field:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px; border-color: var(--color-rule-2); }
+.field:disabled { color: var(--color-muted); cursor: not-allowed; }
+
+/* Chips carry state only: a code the system wrote, tinted by meaning. */
+.chip { display: inline-flex; align-items: center; min-height: 24px; padding: 0 var(--space-xs); border: var(--rule-hair) solid var(--color-rule-2); border-radius: 4px; font-family: var(--font-body); font-size: var(--text-xs); font-weight: 500; white-space: nowrap; color: var(--color-ink-2); background: var(--color-paper-3); }
+.chip-allow { color: var(--color-ok); background: var(--color-ok-soft); border-color: color-mix(in oklab, var(--color-ok) 40%, transparent); }
+.chip-hold { color: var(--color-accent); background: var(--color-accent-soft); border-color: color-mix(in oklab, var(--color-accent) 40%, transparent); }
+.chip-block { color: var(--color-bad); background: var(--color-bad-soft); border-color: color-mix(in oklab, var(--color-bad) 40%, transparent); }
+.chip-replay { color: var(--color-cool); background: var(--color-cool-soft); border-color: color-mix(in oklab, var(--color-cool) 40%, transparent); }
+
+/* One surface cut by 1px seams. */
+.panels { display: grid; gap: var(--rule-hair); color: var(--color-ink); background: var(--color-rule); border: var(--rule-hair) solid var(--color-rule); border-radius: var(--radius-card); overflow: hidden; }
+.panels > * { background: var(--color-paper-2); color: var(--color-ink); }
+
+.reading { font-family: var(--font-outlier); font-weight: 400; letter-spacing: -0.04em; line-height: 1; color: var(--color-ink); font-variant-numeric: tabular-nums slashed-zero; }
+
+.log-row { width: 100%; text-align: left; color: inherit; background: transparent; border: 0; cursor: pointer; transition: background-color var(--dur-micro) var(--ease-out); }
+.log-row:hover { background: color-mix(in oklab, var(--color-paper) 60%, var(--color-paper-2)); }
+.log-row:active { background: var(--color-paper); }
+.log-row:focus-visible { outline-offset: -2px; }
+.log-row[aria-expanded="true"] { background: var(--color-paper); box-shadow: inset 2px 0 0 var(--color-rule-2); }
+.caret { transition: transform var(--dur-short) var(--ease-out); }
+.log-row[aria-expanded="true"] .caret { transform: rotate(90deg); }
+
+@keyframes rise { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.rise { animation: rise var(--dur-short) var(--ease-out) both; }
+@media (prefers-reduced-motion: reduce) { .rise { animation: none; } .caret { transition: none; } }
