@@ -8,7 +8,7 @@ import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import type { Config } from "./config.ts";
 import type { Db } from "./db.ts";
 import { checkpoint, readLedger, verifyLedger } from "./ledger.ts";
-import { dashboard, finishPayPalLink, startPayPalLink, verifyOwnerAction } from "./owner.ts";
+import { dashboard, finishPayPalHold, finishPayPalLink, startPayPalLink, verifyOwnerAction } from "./owner.ts";
 import {
   HttpError,
   createMandate,
@@ -143,6 +143,15 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
     }
   });
   // Review R4: drafting spends LLM tokens, so it needs an owner signature and has its own tight limit.
+  app.get("/api/paypal/hold-return", async (req, reply) => {
+    const q = req.query as { owner_id?: string; token?: string };
+    try {
+      await finishPayPalHold(deps, String(q.owner_id ?? ""), q.token ? String(q.token) : null);
+      return reply.redirect("/?paypal=linked");
+    } catch (e) {
+      return reply.redirect(`/?paypal=error&message=${encodeURIComponent(e instanceof Error ? e.message : "hold failed")}`);
+    }
+  });
   app.post("/api/mandates/draft", { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (req) => {
     const b = req.body as { intent?: string; statement: unknown; signature: string };
     await verifyOwnerAction(deps, b as never, "draft");

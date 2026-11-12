@@ -35,6 +35,8 @@ mutate "R2 dashboard owner check removed"   apps/gateway/src/app.ts 'if (a.owner
 mutate "R3 already-captured read as void"   apps/gateway/src/service.ts 'if (res.status === "ALREADY_CAPTURED") {' 'if (false) {' "records a capture"
 mutate "R6 unverified webhooks stored"      apps/gateway/src/service.ts 'if (!verified) throw new HttpError(400, "webhook signature not verified");' 'if (!verified) { await deps.db.query("INSERT INTO webhook_events(event_id, event_type, verified, payload) VALUES ($1,$2,false,$3) ON CONFLICT DO NOTHING", [event.id, event.event_type, rawBody]); throw new HttpError(400, "webhook signature not verified"); }' "shadow genuine"
 mutate "R9 approval expiry unchecked"       apps/gateway/src/service.ts 'if (approved && p.approval_expires_at &&' 'if (false && p.approval_expires_at &&' "expired holds"
+mutate "Plan B hold limit ignored"          packages/core/src/policy.ts 'total > input.fundingRemainingCents)' 'false)' "overdraw one hold"
+mutate "Plan B in-doubt capture released"    apps/gateway/src/service.ts 'if (dead && !(p.funding === "hold" && p.capture_sent_at)) {' 'if (dead) {' "answer was lost"
 
 echo; echo "killed $pass, survived/errored $fail"
 [ "$fail" -eq 0 ]

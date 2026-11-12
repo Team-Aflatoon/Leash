@@ -136,7 +136,18 @@ export interface MandateRow {
 }
 
 export interface Dashboard {
-  owner: { owner_id: string; display_name: string; public_key_hex: string; paypal_linked: boolean; paypal_payer_email: string | null };
+  owner: {
+    owner_id: string;
+    display_name: string;
+    public_key_hex: string;
+    paypal_linked: boolean;
+    paypal_payer_email: string | null;
+    consent_mode: "vault" | "hold" | null;
+    paypal_hold_cents: number | null;
+    paypal_hold_remaining_cents: number | null;
+    paypal_hold_expires_at: string | null;
+    paypal_hold_status: string;
+  };
   period_start: string;
   mandates: MandateRow[];
   decisions: DecisionRow[];

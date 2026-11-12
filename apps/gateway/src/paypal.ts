@@ -210,6 +210,65 @@ export class PayPalProvider implements PaymentProvider {
     }
   }
 
+  // ---- Plan B: one standing authorization, partial captures (confirmed in SANDBOX_LOG, DECISIONS D13) ----------
+
+  async createHoldOrder(req: { requestId: string; amountCents: number; currency: "USD"; returnUrl: string; cancelUrl: string }) {
+    try {
+      const r = await this.call<{ id: string; status: string; links?: { rel: string; href: string }[] }>(
+        "POST",
+        "/v2/checkout/orders",
+        {
+          intent: "AUTHORIZE",
+          purchase_units: [{ reference_id: "leash-hold", description: "Leash: standing hold your restock agent can spend within", amount: money(req.amountCents, req.currency) }],
+          payment_source: {
+            paypal: {
+              experience_context: { brand_name: "Leash", user_action: "CONTINUE", shipping_preference: "NO_SHIPPING", return_url: req.returnUrl, cancel_url: req.cancelUrl },
+            },
+          },
+        },
+        req.requestId,
+      );
+      const approve = r.links?.find((l) => l.rel === "payer-action") ?? r.links?.find((l) => l.rel === "approve");
+      if (!approve) throw new ProviderRejectedError(`hold order ${r.id} (${r.status}) has no approval link`);
+      return { orderId: r.id, approveUrl: approve.href };
+    } catch (e) {
+      if (e instanceof ProviderRejectedError) throw e;
+      return this.classify(e);
+    }
+  }
+
+  async authorizeHoldOrder(req: { requestId: string; orderId: string }) {
+    try {
+      const r = await this.call<{
+        status: string;
+        payer?: { email_address?: string };
+        purchase_units?: { payments?: { authorizations?: { id: string; status: string; amount?: { value: string }; expiration_time?: string }[] } }[];
+      }>("POST", `/v2/checkout/orders/${encodeURIComponent(req.orderId)}/authorize`, {}, req.requestId);
+      const a = r.purchase_units?.[0]?.payments?.authorizations?.[0];
+      if (!a || (a.status !== "CREATED" && a.status !== "PENDING")) throw new ProviderRejectedError(`hold authorization ${a?.status ?? "missing"} (order ${r.status})`);
+      return { authorizationId: a.id, amountCents: Math.round(Number(a.amount?.value ?? "0") * 100), expiresAt: a.expiration_time ?? null, payerEmail: r.payer?.email_address ?? null };
+    } catch (e) {
+      if (e instanceof ProviderRejectedError) throw e;
+      return this.classify(e);
+    }
+  }
+
+  async captureFromHold(req: { requestId: string; authorizationId: string; amountCents: number; currency: "USD"; invoiceId: string }) {
+    try {
+      const r = await this.call<{ id: string; status: string }>(
+        "POST",
+        `/v2/payments/authorizations/${encodeURIComponent(req.authorizationId)}/capture`,
+        { amount: money(req.amountCents, req.currency), final_capture: false, invoice_id: req.invoiceId },
+        req.requestId,
+      );
+      if (r.status === "DECLINED" || r.status === "FAILED") throw new ProviderRejectedError(`capture ${r.id} ${r.status}`);
+      return { captureId: r.id, status: r.status };
+    } catch (e) {
+      if (e instanceof ProviderRejectedError) throw e;
+      return this.classify(e);
+    }
+  }
+
   async voidAuthorization(req: { requestId: string; authorizationId: string }) {
     try {
       await this.call("POST", `/v2/payments/authorizations/${encodeURIComponent(req.authorizationId)}/void`, undefined, req.requestId);

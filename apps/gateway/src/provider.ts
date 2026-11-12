@@ -13,6 +13,12 @@ export interface PaymentProvider {
   /** Merchant-initiated order with intent AUTHORIZE against the vaulted wallet. No redirect. */
   authorize(req: AuthorizeRequest): Promise<AuthorizeResult>;
   capture(req: { requestId: string; authorizationId: string; invoiceId: string }): Promise<{ captureId: string; status: string }>;
+  /** Plan B consent: an AUTHORIZE order for the hold amount; the owner approves it once at `approveUrl`. */
+  createHoldOrder(req: { requestId: string; amountCents: number; currency: "USD"; returnUrl: string; cancelUrl: string }): Promise<{ orderId: string; approveUrl: string }>;
+  /** Authorize the approved hold order. */
+  authorizeHoldOrder(req: { requestId: string; orderId: string }): Promise<{ authorizationId: string; amountCents: number; expiresAt: string | null; payerEmail: string | null }>;
+  /** Partial capture from the hold (final_capture false). Rejects with ProviderRejectedError on a definitive refusal. */
+  captureFromHold(req: { requestId: string; authorizationId: string; amountCents: number; currency: "USD"; invoiceId: string }): Promise<{ captureId: string; status: string }>;
   /**
    * VOIDED: the hold is released (now, or earlier, or it expired). ALREADY_CAPTURED: the money DID move — the caller
    * must record a capture, never a void (review R3).

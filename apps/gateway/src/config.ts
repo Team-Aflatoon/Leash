@@ -17,6 +17,9 @@ export interface Config {
   agentLlm: LlmConfig | null;
   trustProxyHops: number | false;
   maxAgentRuns: number;
+  /** auto: try Vault, fall back to a standing hold if PayPal refuses (D13). */
+  consentMode: "auto" | "vault" | "hold";
+  holdCents: number;
 }
 
 export type LlmProvider = "gemini" | "anthropic";
@@ -78,5 +81,7 @@ export function loadConfig(env = process.env): Config {
     agentLlm: pickLlm(env, true),
     trustProxyHops: env.TRUST_PROXY_HOPS ? Number(env.TRUST_PROXY_HOPS) : false,
     maxAgentRuns: Number(env.MAX_AGENT_RUNS ?? 3),
+    consentMode: env.PAYPAL_CONSENT_MODE === "vault" || env.PAYPAL_CONSENT_MODE === "hold" ? env.PAYPAL_CONSENT_MODE : "auto",
+    holdCents: Number(env.PAYPAL_HOLD_CENTS ?? 200_000),
   };
 }

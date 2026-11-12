@@ -77,15 +77,37 @@ export function MandateView({ owner, data, paypalConfigured, onChanged }: { owne
       <div className="space-y-6">
         <h1 className="text-2xl text-fg">Set what the agent may spend</h1>
         <Section title="1. Link PayPal once">
-          {data.owner.paypal_linked ? (
+          {data.owner.paypal_linked && data.owner.consent_mode === "hold" ? (
+            <div className="space-y-3">
+              <Notice tone="good">
+                PayPal approved a standing hold{data.owner.paypal_payer_email ? ` from ${data.owner.paypal_payer_email}` : ""}. Each purchase your mandates allow is captured
+                from it, with no redirect.
+              </Notice>
+              <dl className="grid grid-cols-3 gap-4 text-sm">
+                <div>
+                  <dt className="label">Hold</dt>
+                  <dd className="mono mt-1 text-fg">{usd(Number(data.owner.paypal_hold_cents ?? 0))}</dd>
+                </div>
+                <div>
+                  <dt className="label">Left</dt>
+                  <dd className="mono mt-1 text-good">{usd(Number(data.owner.paypal_hold_remaining_cents ?? 0))}</dd>
+                </div>
+                <div>
+                  <dt className="label">Expires</dt>
+                  <dd className="mono mt-1 text-blue">{data.owner.paypal_hold_expires_at ? new Date(data.owner.paypal_hold_expires_at).toLocaleDateString() : "n/a"}</dd>
+                </div>
+              </dl>
+              <p className="text-sm text-dim">PayPal keeps an authorization for up to 29 days. Your mandate limits still decide every purchase; the hold is only the most that can ever be captured.</p>
+            </div>
+          ) : data.owner.paypal_linked ? (
             <Notice tone="good">
-              PayPal sandbox wallet linked{data.owner.paypal_payer_email ? ` (${data.owner.paypal_payer_email})` : ""}. The gateway can authorize inside your mandates without asking PayPal again.
+              PayPal sandbox wallet saved{data.owner.paypal_payer_email ? ` (${data.owner.paypal_payer_email})` : ""}. The gateway can charge inside your mandates without asking PayPal again.
             </Notice>
           ) : (
             <div className="space-y-3 text-sm text-fg-2">
               <p>
-                You approve PayPal once. PayPal keeps your wallet in its vault and gives the gateway a token for merchant-initiated payments. The agent never sees it, and the gateway
-                only uses it inside limits you sign.
+                You approve PayPal once. Where PayPal allows it, your wallet is saved for merchant-initiated payments; otherwise you approve one standing hold that purchases are
+                captured from. Either way the agent never sees it, and the gateway only uses it inside limits you sign.
               </p>
               <button
                 className="btn btn-primary"

@@ -17,6 +17,7 @@ export type ReasonCode =
   | "MANDATE_EXPIRED"
   | "AGENT_NOT_AUTHORIZED"
   | "PAYMENT_CONSENT_MISSING"
+  | "PAYMENT_HOLD_EXHAUSTED"
   // cart resolution
   | "UNKNOWN_SKU"
   | "SKU_INACTIVE"
@@ -78,6 +79,8 @@ export interface RuleInput {
   periodSpentCents: number;
   /** Another proposal with the same cart hash was decided ALLOW/HOLD in the duplicate window. */
   duplicateOfRecent: boolean;
+  /** When paid from the owner's standing PayPal hold: what is left of it (cents). Null when paid from a vaulted wallet. */
+  fundingRemainingCents?: number | null;
 }
 
 export interface RuleResult {
@@ -179,6 +182,8 @@ export function evaluateRules(input: RuleInput): RuleResult {
   const total = lines.reduce((s, l) => s + l.line_total_cents, 0);
   if (!Number.isSafeInteger(total)) throw new Error("cart total overflow");
   if (total > m.per_order_cap_cents) reasons.push(rule("PER_ORDER_CAP_EXCEEDED", "BLOCK", `Order total ${fmt(total)} exceeds the per-order cap of ${fmt(m.per_order_cap_cents)}.`));
+  if (input.fundingRemainingCents !== undefined && input.fundingRemainingCents !== null && total > input.fundingRemainingCents)
+    reasons.push(rule("PAYMENT_HOLD_EXHAUSTED", "BLOCK", `Order total ${fmt(total)} is more than the ${fmt(Math.max(0, input.fundingRemainingCents))} left on your PayPal hold.`));
   if (input.periodSpentCents + total > m.budget.limit_cents)
     reasons.push(
       rule("BUDGET_EXCEEDED", "BLOCK", `Order total ${fmt(total)} with ${fmt(input.periodSpentCents)} already committed this month exceeds the ${fmt(m.budget.limit_cents)} budget.`),

@@ -26,6 +26,15 @@ const unconfiguredProvider: PaymentProvider = {
   async capture() {
     throw new ProviderRejectedError("PayPal not configured");
   },
+  async createHoldOrder() {
+    throw new ProviderRejectedError("PayPal sandbox credentials are not configured on this server");
+  },
+  async authorizeHoldOrder() {
+    throw new ProviderRejectedError("PayPal not configured");
+  },
+  async captureFromHold() {
+    throw new ProviderRejectedError("PayPal not configured");
+  },
   async voidAuthorization() {
     throw new ProviderRejectedError("PayPal not configured");
   },
@@ -54,7 +63,7 @@ const deps: Deps = {
   provider,
   intent,
   now: () => new Date(),
-  config: { approvalTimeoutSeconds: config.approvalTimeoutSeconds, publicUrl: config.publicUrl, demoMode: config.demoMode },
+  config: { approvalTimeoutSeconds: config.approvalTimeoutSeconds, publicUrl: config.publicUrl, demoMode: config.demoMode, consentMode: config.consentMode, holdCents: config.holdCents },
   wake: () => wake(),
 };
 const worker = startWorker(deps);

@@ -24,6 +24,7 @@ export class FakePayPal implements PaymentProvider {
 
   async createVaultSetup(req: { requestId: string }) {
     this.calls.push({ op: "setup", requestId: req.requestId });
+    if (!this.vaultEnabled) throw new ProviderRejectedError("PayPal 403 NOT_AUTHORIZED", "NOT_ENABLED_TO_VAULT_PAYMENT_SOURCE");
     return { setupTokenId: `ST-${randomUUID()}`, approveUrl: "https://sandbox.example/approve" };
   }
   async finalizeVault(req: { requestId: string }) {
@@ -51,6 +52,27 @@ export class FakePayPal implements PaymentProvider {
     if (this.delayMs) await new Promise((r) => setTimeout(r, this.delayMs));
     if (this.captureBehaviour === "reject") throw new ProviderRejectedError("AUTHORIZATION_EXPIRED");
     return { captureId: `C-${req.authorizationId}`, status: "COMPLETED" };
+  }
+  vaultEnabled = true;
+  holdCents = 200_000;
+  private holdCaptures = new Map<string, { captureId: string; status: string }>();
+  async createHoldOrder(req: { requestId: string; amountCents: number }) {
+    this.calls.push({ op: "hold-order", requestId: req.requestId, arg: req });
+    return { orderId: `HO-${randomUUID()}`, approveUrl: "https://sandbox.example/checkoutnow" };
+  }
+  async authorizeHoldOrder(req: { requestId: string; orderId: string }) {
+    this.calls.push({ op: "hold-authorize", requestId: req.requestId, arg: req });
+    return { authorizationId: `HA-${req.orderId}`, amountCents: this.holdCents, expiresAt: new Date(Date.now() + 29 * 86_400_000).toISOString(), payerEmail: "buyer@example.com" };
+  }
+  async captureFromHold(req: { requestId: string; authorizationId: string; amountCents: number }) {
+    this.calls.push({ op: "hold-capture", requestId: req.requestId, arg: req });
+    if (this.delayMs) await new Promise((r) => setTimeout(r, this.delayMs));
+    if (this.captureBehaviour === "reject") throw new ProviderRejectedError("CAPTURE_DECLINED");
+    const prev = this.holdCaptures.get(req.requestId); // idempotent per PayPal-Request-Id
+    if (prev) return prev;
+    const c = { captureId: `HC-${randomUUID()}`, status: "COMPLETED" };
+    this.holdCaptures.set(req.requestId, c);
+    return c;
   }
   async voidAuthorization(req: { requestId: string; authorizationId: string }) {
     this.calls.push({ op: "void", requestId: req.requestId, arg: req });

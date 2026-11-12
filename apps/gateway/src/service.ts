@@ -27,7 +27,7 @@ export interface Deps {
   provider: PaymentProvider;
   intent: IntentChecker;
   now: () => Date;
-  config: { approvalTimeoutSeconds: number; publicUrl: string; demoMode: boolean };
+  config: { approvalTimeoutSeconds: number; publicUrl: string; demoMode: boolean; consentMode?: "auto" | "vault" | "hold"; holdCents?: number };
   /** Nudge the job worker after a commit that enqueued work. */
   wake: () => void;
 }
@@ -62,9 +62,26 @@ export async function registerOwner(deps: Deps, input: { display_name: string; p
   return { owner_id };
 }
 
-async function ownerKey(q: Db | Tx, ownerId: string): Promise<{ public_key_hex: string; paypal_vault_id: string | null } | null> {
-  const r = await q.query("SELECT public_key_hex, paypal_vault_id FROM owners WHERE owner_id = $1", [ownerId]);
+interface OwnerFunding {
+  public_key_hex: string;
+  paypal_vault_id: string | null;
+  paypal_hold_auth_id: string | null;
+  paypal_hold_cents: number | null;
+  paypal_hold_status: string;
+  paypal_hold_expires_at: Date | null;
+}
+
+async function ownerKey(q: Db | Tx, ownerId: string): Promise<OwnerFunding | null> {
+  const r = await q.query("SELECT public_key_hex, paypal_vault_id, paypal_hold_auth_id, paypal_hold_cents, paypal_hold_status, paypal_hold_expires_at FROM owners WHERE owner_id = $1", [ownerId]);
   return r.rows[0] ?? null;
+}
+
+/** How this owner can pay right now: a vaulted wallet (preferred), a live standing hold (Plan B), or not at all. */
+function fundingOf(o: OwnerFunding | null, now: Date): "vault" | "hold" | null {
+  if (!o) return null;
+  if (o.paypal_vault_id) return "vault";
+  if (o.paypal_hold_status === "AUTHORIZED" && o.paypal_hold_auth_id && (!o.paypal_hold_expires_at || new Date(o.paypal_hold_expires_at).getTime() > now.getTime())) return "hold";
+  return null;
 }
 
 export async function createMandate(deps: Deps, input: { body: unknown; signature: string }) {
@@ -175,12 +192,12 @@ interface MandateRow {
   revoked_at: Date | null;
 }
 
-async function mandateState(q: Db | Tx, row: MandateRow | undefined): Promise<MandateState | null> {
+async function mandateState(q: Db | Tx, row: MandateRow | undefined, now: Date = new Date()): Promise<MandateState | null> {
   if (!row) return null;
   const owner = await ownerKey(q, row.owner_id);
   // SAFETY (G4): re-verify the signature on every decision. If anyone edits the stored body, it stops verifying.
   const signatureValid = !!owner && canonicalHash(row.body) === row.body_hash && verifyJson("mandate", row.body, row.signature, owner.public_key_hex);
-  return { body: row.body, signatureValid, revoked: row.revoked_at !== null, paymentConsent: !!owner?.paypal_vault_id };
+  return { body: row.body, signatureValid, revoked: row.revoked_at !== null, paymentConsent: fundingOf(owner, now) !== null };
 }
 
 async function existingPrimary(q: Db | Tx, agentId: string, key: string) {
@@ -264,7 +281,7 @@ export async function submitProposal(deps: Deps, agentId: string, raw: unknown, 
   // happens again inside the transaction with fresh budget figures.
   const catalog = await loadCatalog(deps.db);
   const preRow = (await deps.db.query<MandateRow>("SELECT * FROM mandates WHERE mandate_id = $1", [p.mandate_id])).rows[0];
-  const pre = evaluateRules({ now, agentId, mandate: await mandateState(deps.db, preRow), proposal: p, catalog, periodSpentCents: 0, duplicateOfRecent: false });
+  const pre = evaluateRules({ now, agentId, mandate: await mandateState(deps.db, preRow, now), proposal: p, catalog, periodSpentCents: 0, duplicateOfRecent: false });
   let verdict: IntentVerdict = { kind: "skipped" };
   if (pre.outcome !== "BLOCK" && preRow && !outOfScope) {
     verdict = await deps.intent.check({ intent: preRow.body.intent, lines: pre.lines, total_cents: pre.total_cents, merchant_id: pre.merchant_id, agent_note: p.note ?? null });
@@ -276,15 +293,29 @@ export async function submitProposal(deps: Deps, agentId: string, raw: unknown, 
       // SAFETY (G5): the mandate row lock serialises every decision for this mandate, so budget arithmetic below
       // sees all earlier reservations and no two requests can both fit into the same remaining budget.
       const row = (await tx.query<MandateRow>("SELECT * FROM mandates WHERE mandate_id = $1 FOR NO KEY UPDATE", [p.mandate_id])).rows[0];
-      const state = await mandateState(tx, row);
+      const state = await mandateState(tx, row, now);
       let spent = 0;
       let dup = false;
+      // Funding: a vaulted wallet, or the owner's standing hold (Plan B). Locking the owner row serialises every
+      // decision that draws on the same hold, across all of this owner's mandates, so the hold can't be overdrawn.
+      let funding: "vault" | "hold" | null = null;
+      let fundingRef: string | null = null;
+      let fundingRemainingCents: number | null = null;
+      if (row) {
+        const o = (await tx.query<OwnerFunding>("SELECT public_key_hex, paypal_vault_id, paypal_hold_auth_id, paypal_hold_cents, paypal_hold_status, paypal_hold_expires_at FROM owners WHERE owner_id = $1 FOR NO KEY UPDATE", [row.owner_id])).rows[0] ?? null;
+        funding = fundingOf(o, now);
+        if (funding === "hold") {
+          fundingRef = o!.paypal_hold_auth_id;
+          const used = Number((await tx.query("SELECT COALESCE(SUM(amount_cents),0) AS s FROM payments WHERE funding_ref = $1 AND state IN ('RESERVED','AUTHORIZED','CAPTURED')", [fundingRef])).rows[0].s);
+          fundingRemainingCents = Number(o!.paypal_hold_cents ?? 0) - used;
+        }
+      }
       if (row) {
         spent = Number(
           (await tx.query("SELECT COALESCE(SUM(amount_cents),0) AS s FROM payments WHERE mandate_id = $1 AND state IN ('RESERVED','AUTHORIZED','CAPTURED') AND created_at >= $2", [row.mandate_id, periodStart(now)])).rows[0].s,
         );
       }
-      const rules0 = evaluateRules({ now, agentId, mandate: state, proposal: p, catalog, periodSpentCents: spent, duplicateOfRecent: false });
+      const rules0 = evaluateRules({ now, agentId, mandate: state, proposal: p, catalog, periodSpentCents: spent, duplicateOfRecent: false, fundingRemainingCents });
       if (row && rules0.cart_hash) {
         dup = (
           await tx.query(
@@ -293,7 +324,7 @@ export async function submitProposal(deps: Deps, agentId: string, raw: unknown, 
           )
         ).rowCount! > 0;
       }
-      const rules = dup ? evaluateRules({ now, agentId, mandate: state, proposal: p, catalog, periodSpentCents: spent, duplicateOfRecent: true }) : rules0;
+      const rules = dup ? evaluateRules({ now, agentId, mandate: state, proposal: p, catalog, periodSpentCents: spent, duplicateOfRecent: true, fundingRemainingCents }) : rules0;
       if (outOfScope) {
         rules.reasons.unshift({ code: "AGENT_NOT_AUTHORIZED", outcome: "BLOCK", source: "rules", message: "This agent token is scoped to a different mandate." });
         rules.outcome = "BLOCK";
@@ -314,8 +345,8 @@ export async function submitProposal(deps: Deps, agentId: string, raw: unknown, 
         payment_id = randomUUID();
         const hold = final.outcome === "HOLD";
         await tx.query(
-          `INSERT INTO payments(payment_id, decision_id, mandate_id, amount_cents, currency, state, needs_approval, approval) VALUES ($1,$2,$3,$4,'USD','RESERVED',$5,$6)`,
-          [payment_id, decision_id, p.mandate_id, rules.total_cents, hold, hold ? "PENDING" : "NOT_REQUIRED"],
+          `INSERT INTO payments(payment_id, decision_id, mandate_id, amount_cents, currency, state, needs_approval, approval, funding, funding_ref) VALUES ($1,$2,$3,$4,'USD','RESERVED',$5,$6,$7,$8)`,
+          [payment_id, decision_id, p.mandate_id, rules.total_cents, hold, hold ? "PENDING" : "NOT_REQUIRED", funding ?? "vault", fundingRef],
         );
         await enqueue(tx, "payment.authorize", { payment_id });
       }
@@ -397,6 +428,9 @@ interface PaymentRow {
   approval: string;
   paypal_authorization_id: string | null;
   paypal_order_id: string | null;
+  funding: "vault" | "hold";
+  funding_ref: string | null;
+  capture_sent_at: Date | null;
 }
 
 async function lockPayment(tx: Tx, id: string): Promise<(PaymentRow & { revoked_at: Date | null; body: MandateBody; owner_id: string; paypal_vault_id: string | null }) | undefined> {
@@ -420,11 +454,20 @@ export async function jobAuthorize(deps: Deps, paymentId: string) {
   const p = await withTx(deps.db, (tx) => lockPayment(tx, paymentId));
   if (!p || p.state !== "RESERVED") return;
   const decision = (await deps.db.query("SELECT lines FROM decisions WHERE decision_id = (SELECT decision_id FROM payments WHERE payment_id = $1)", [paymentId])).rows[0];
-  if (!p.paypal_vault_id) {
-    await failPayment(deps, paymentId, "owner has no vaulted PayPal payment method");
-    return;
-  }
-  const res = await deps.provider.authorize({
+  let res: Awaited<ReturnType<PaymentProvider["authorize"]>> | { ok: true; orderId: null; authorizationId: null; status: string };
+  if (p.funding === "hold") {
+    // Plan B: the money is already authorized by the owner's standing hold; nothing to call until capture.
+    if (!p.funding_ref) {
+      await failPayment(deps, paymentId, "payment has no PayPal hold to draw from");
+      return;
+    }
+    res = { ok: true, orderId: null, authorizationId: null, status: "HOLD" };
+  } else {
+    if (!p.paypal_vault_id) {
+      await failPayment(deps, paymentId, "owner has no vaulted PayPal payment method");
+      return;
+    }
+    res = await deps.provider.authorize({
     requestId: `leash-${paymentId}-authorize`,
     vaultId: p.paypal_vault_id,
     paymentId,
@@ -432,7 +475,8 @@ export async function jobAuthorize(deps: Deps, paymentId: string) {
     currency: "USD",
     lines: decision.lines,
     shipTo: p.body.ship_to,
-  }); // ProviderUncertainError propagates → job retried with the same PayPal-Request-Id.
+    }); // ProviderUncertainError propagates → job retried with the same PayPal-Request-Id.
+  }
   if (!res.ok) {
     await failPayment(deps, paymentId, res.error);
     return;
@@ -455,7 +499,12 @@ export async function jobAuthorize(deps: Deps, paymentId: string) {
     if (dead) await enqueue(tx, "payment.void", { payment_id: paymentId, reason: dead });
     else if (holdForApproval) await enqueue(tx, "approval.expire", { payment_id: paymentId }, deps.config.approvalTimeoutSeconds);
     else await enqueue(tx, "payment.capture", { payment_id: paymentId });
-    await appendLedger(tx, "payment.authorized", { payment_id: paymentId, amount_cents: cur.amount_cents, paypal_order_id: res.orderId, paypal_authorization_id: res.authorizationId }, now);
+    await appendLedger(
+      tx,
+      "payment.authorized",
+      { payment_id: paymentId, amount_cents: cur.amount_cents, funding: cur.funding, paypal_order_id: res.orderId, paypal_authorization_id: res.authorizationId ?? cur.funding_ref },
+      now,
+    );
   });
   deps.wake();
 }
@@ -469,6 +518,9 @@ async function failPayment(deps: Deps, paymentId: string, error: string) {
 
 export async function jobCapture(deps: Deps, paymentId: string) {
   let enqueuedVoid = false;
+  // Hold-funded captures are marked "sent" in their own committed write first: if the answer is lost, the retry
+  // must complete the capture (same PayPal-Request-Id), never release the money, because PayPal may have captured.
+  await deps.db.query("UPDATE payments SET capture_sent_at = COALESCE(capture_sent_at, now()) WHERE payment_id = $1 AND funding = 'hold' AND state = 'AUTHORIZED' AND approval IN ('NOT_REQUIRED','APPROVED')", [paymentId]);
   await withTx(deps.db, async (tx) => {
     // Holding the row lock across the capture call: approve/void/webhook processing for this payment wait for us.
     const p = await lockPayment(tx, paymentId);
@@ -476,19 +528,23 @@ export async function jobCapture(deps: Deps, paymentId: string) {
     if (!(p.approval === "NOT_REQUIRED" || p.approval === "APPROVED")) return;
     const now = deps.now();
     const dead = mandateStillLive(p, now);
-    if (dead) {
+    // A capture already sent for a hold-funded payment is finished, not abandoned (consistent with review R10).
+    if (dead && !(p.funding === "hold" && p.capture_sent_at)) {
       await enqueue(tx, "payment.void", { payment_id: paymentId, reason: dead });
       enqueuedVoid = true;
       return;
     }
     try {
-      const c = await deps.provider.capture({ requestId: `leash-${paymentId}-capture`, authorizationId: p.paypal_authorization_id!, invoiceId: paymentId });
+      const c =
+        p.funding === "hold"
+          ? await deps.provider.captureFromHold({ requestId: `leash-${paymentId}-capture`, authorizationId: p.funding_ref!, amountCents: p.amount_cents, currency: "USD", invoiceId: paymentId })
+          : await deps.provider.capture({ requestId: `leash-${paymentId}-capture`, authorizationId: p.paypal_authorization_id!, invoiceId: paymentId });
       await tx.query("UPDATE payments SET state = 'CAPTURED', paypal_capture_id = $2, updated_at = now() WHERE payment_id = $1", [paymentId, c.captureId]);
       await appendLedger(tx, "payment.captured", { payment_id: paymentId, amount_cents: p.amount_cents, paypal_capture_id: c.captureId, status: c.status }, now);
     } catch (e) {
       if (!(e instanceof ProviderRejectedError)) throw e;
-      // Capture definitively refused: release the hold rather than leave money in limbo.
-      await tx.query("UPDATE payments SET last_error = $2, updated_at = now() WHERE payment_id = $1", [paymentId, e.message.slice(0, 500)]);
+      // Capture definitively refused: nothing was captured, so it is safe to release (clear the "sent" mark).
+      await tx.query("UPDATE payments SET last_error = $2, capture_sent_at = NULL, updated_at = now() WHERE payment_id = $1", [paymentId, e.message.slice(0, 500)]);
       await enqueue(tx, "payment.void", { payment_id: paymentId, reason: "capture rejected" });
       await appendLedger(tx, "payment.capture_rejected", { payment_id: paymentId, error: e.message.slice(0, 500) }, now);
       enqueuedVoid = true;
@@ -504,6 +560,19 @@ export async function jobVoid(deps: Deps, paymentId: string, reason: string): Pr
     if (p.state === "RESERVED") return "retry"; // authorize still in flight; it re-checks the mandate itself
     if (p.state !== "AUTHORIZED") return "done";
     const now = deps.now();
+    if (p.funding === "hold") {
+      // Plan B: nothing was captured from the owner's hold for this payment, so releasing it is purely our
+      // bookkeeping (the budget frees up); the hold itself stays for other purchases. A capture that was already
+      // sent is never released here: the capture job finishes it with the same request id.
+      if (p.capture_sent_at) {
+        await enqueue(tx, "payment.capture", { payment_id: paymentId });
+        await appendLedger(tx, "payment.release_refused", { payment_id: paymentId, reason, note: "capture already sent; completing it instead" }, now);
+        return "done";
+      }
+      await tx.query(`UPDATE payments SET state = 'VOIDED', approval = CASE WHEN approval = 'PENDING' THEN 'EXPIRED' ELSE approval END, updated_at = now() WHERE payment_id = $1`, [paymentId]);
+      await appendLedger(tx, "payment.voided", { payment_id: paymentId, amount_cents: p.amount_cents, funding: "hold", reason }, now);
+      return "done";
+    }
     let res: { status: "VOIDED" | "ALREADY_CAPTURED" };
     try {
       res = await deps.provider.voidAuthorization({ requestId: `leash-${paymentId}-void`, authorizationId: p.paypal_authorization_id! });
