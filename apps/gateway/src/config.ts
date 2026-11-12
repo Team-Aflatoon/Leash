@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { generateKeyPair, publicKeyFromSecret } from "@leash/core";
+import { generateKeyPair, publicKeyFromSecret, sha256Hex } from "@leash/core";
 
 export interface Config {
   port: number;
@@ -21,8 +21,10 @@ function req(name: string): string {
 }
 
 export function loadConfig(env = process.env): Config {
-  const sk = env.GATEWAY_SIGNING_KEY ?? generateKeyPair().secretKeyHex;
-  if (!/^[0-9a-f]{64}$/.test(sk)) throw new Error("GATEWAY_SIGNING_KEY must be 32 bytes hex");
+  // Accept 32-byte hex, or any high-entropy string (e.g. a host-generated secret) which is hashed into a key.
+  const raw = env.GATEWAY_SIGNING_KEY;
+  const sk = !raw ? generateKeyPair().secretKeyHex : /^[0-9a-f]{64}$/.test(raw) ? raw : sha256Hex(`leash-gateway-key:${raw}`);
+  if (raw && raw.length < 32) throw new Error("GATEWAY_SIGNING_KEY is too short");
   if (!env.GATEWAY_SIGNING_KEY) console.warn("[leash] GATEWAY_SIGNING_KEY not set: using an ephemeral key; ledger checkpoints won't verify after restart");
   const paypal =
     env.PAYPAL_CLIENT_ID && env.PAYPAL_CLIENT_SECRET

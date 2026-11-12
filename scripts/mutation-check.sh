@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Proves the security tests have teeth: each mutation removes one guard; the named test MUST fail.
+# Requires a clean working tree for the mutated files (each is restored with `git checkout` afterwards).
+set -uo pipefail
+cd "$(dirname "$0")/.."
+
+pass=0; fail=0
+mutate() {
+  local name="$1" file="$2" from="$3" to="$4" test="$5"
+  if ! grep -qF -- "$from" "$file"; then echo "?? $name: pattern not found in $file"; fail=$((fail+1)); return; fi
+  node -e 'const fs=require("fs");const [f,a,b]=process.argv.slice(1);fs.writeFileSync(f,fs.readFileSync(f,"utf8").split(a).join(b))' "$file" "$from" "$to"
+  if npx vitest run -t "$test" >/tmp/leash-mut.log 2>&1; then
+    echo "SURVIVED  $name  (test '$test' still passes — guard is untested!)"; fail=$((fail+1))
+  else
+    echo "killed    $name"; pass=$((pass+1))
+  fi
+  git checkout -- "$file"
+}
+
+mutate "G5 mandate row lock removed"        apps/gateway/src/service.ts 'WHERE mandate_id = $1 FOR NO KEY UPDATE", [p.mandate_id]' 'WHERE mandate_id = $1", [p.mandate_id]' "never exceed"
+mutate "G5 idempotency unique index removed" apps/gateway/migrations/001_init.sql 'CREATE UNIQUE INDEX decisions_idem' 'CREATE INDEX decisions_idem' "20 concurrent copies"
+mutate "G2 address lock disabled"           packages/core/src/policy.ts 'if (proposal.ship_to && !sameAddress' 'if (false && proposal.ship_to && !sameAddress' "redirected shipping address"
+mutate "G2 price claim ignored"             packages/core/src/policy.ts 'pl.claimed_unit_price_cents !== item.unit_price_cents)' 'false)' "lowballed price"
+mutate "G3 LLM may loosen"                  packages/core/src/policy.ts 'reasons.reduce<Outcome>((o, r) => stricter(o, r.outcome), rules.outcome)' '(verdict.kind === "consistent" ? "ALLOW" : reasons.reduce<Outcome>((o, r) => stricter(o, r.outcome), rules.outcome))' "never looser"
+mutate "G4 signature not re-verified"       apps/gateway/src/service.ts 'canonicalHash(row.body) === row.body_hash && verifyJson(' 'true || (' "edited in the database"
+mutate "G4 revocation ignored at capture"   apps/gateway/src/service.ts 'if (m.revoked_at) return "mandate revoked";' '' "while PayPal is authorizing"
+mutate "G1 agent env not filtered"          apps/gateway/src/redteam.ts 'for (const k of keep) if (base[k]) env[k] = base[k]!;' 'Object.assign(env, base);' "allowlist without secrets"
+mutate "G1 approval signature not checked"  apps/gateway/src/service.ts 'if (!owner || !verifyJson("approval"' 'if (false && !verifyJson("approval"' "cannot approve its own"
+mutate "G7 ledger trigger removed"          apps/gateway/migrations/001_init.sql 'CREATE TRIGGER ledger_no_update' '-- CREATE TRIGGER ledger_no_update' "refuses UPDATE"
+mutate "Webhook verification bypassed"      apps/gateway/src/service.ts 'if (!verified) throw new HttpError(400, "webhook signature not verified");' '' "never change state"
+
+echo; echo "killed $pass, survived/errored $fail"
+[ "$fail" -eq 0 ]
