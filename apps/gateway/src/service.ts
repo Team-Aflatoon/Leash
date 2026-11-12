@@ -88,7 +88,7 @@ export async function revokeMandate(deps: Deps, input: { statement: unknown; sig
   const now = deps.now();
   if (Math.abs(now.getTime() - Date.parse(st.data.revoked_at)) > STATEMENT_MAX_AGE_MS) throw new HttpError(400, "revocation statement is stale");
   const res = await withTx(deps.db, async (tx) => {
-    const m = (await tx.query("SELECT owner_id, revoked_at FROM mandates WHERE mandate_id = $1 FOR UPDATE", [st.data.mandate_id])).rows[0];
+    const m = (await tx.query("SELECT owner_id, revoked_at FROM mandates WHERE mandate_id = $1 FOR NO KEY UPDATE", [st.data.mandate_id])).rows[0];
     if (!m) throw new HttpError(404, "unknown mandate");
     const owner = await ownerKey(tx, m.owner_id);
     if (!owner || !verifyJson("revocation", st.data, input.signature, owner.public_key_hex)) throw new HttpError(401, "revocation signature invalid");
@@ -106,13 +106,14 @@ export async function revokeMandate(deps: Deps, input: { statement: unknown; sig
 export async function retireOwnerMandates(deps: Deps, ownerId: string, reason: string) {
   const now = deps.now();
   const out = await withTx(deps.db, async (tx) => {
-    const ms = (await tx.query<{ mandate_id: string }>("SELECT mandate_id FROM mandates WHERE owner_id = $1 AND revoked_at IS NULL FOR UPDATE", [ownerId])).rows;
+    const ms = (await tx.query<{ mandate_id: string }>("SELECT mandate_id FROM mandates WHERE owner_id = $1 AND revoked_at IS NULL FOR NO KEY UPDATE", [ownerId])).rows;
     let voids = 0;
     for (const m of ms) {
       await tx.query("UPDATE mandates SET revoked_at = $2, revocation_reason = $3 WHERE mandate_id = $1", [m.mandate_id, now, reason]);
       voids += await enqueueVoidsForMandate(tx, m.mandate_id, reason);
-      await appendLedger(tx, "mandate.retired", { mandate_id: m.mandate_id, reason }, now);
     }
+    // Ledger append is always the LAST statement of a transaction (see appendLedger: lock ordering).
+    for (const m of ms) await appendLedger(tx, "mandate.retired", { mandate_id: m.mandate_id, reason }, now);
     return { retired: ms.length, voids };
   });
   deps.wake();
@@ -259,7 +260,7 @@ export async function submitProposal(deps: Deps, agentId: string, raw: unknown):
     await withTx(deps.db, async (tx) => {
       // SAFETY (G5): the mandate row lock serialises every decision for this mandate, so budget arithmetic below
       // sees all earlier reservations and no two requests can both fit into the same remaining budget.
-      const row = (await tx.query<MandateRow>("SELECT * FROM mandates WHERE mandate_id = $1 FOR UPDATE", [p.mandate_id])).rows[0];
+      const row = (await tx.query<MandateRow>("SELECT * FROM mandates WHERE mandate_id = $1 FOR NO KEY UPDATE", [p.mandate_id])).rows[0];
       const state = await mandateState(tx, row);
       let spent = 0;
       let dup = false;
@@ -338,7 +339,7 @@ export async function decideApproval(deps: Deps, input: { statement: unknown; si
   const now = deps.now();
   if (Math.abs(now.getTime() - Date.parse(st.data.signed_at)) > STATEMENT_MAX_AGE_MS) throw new HttpError(400, "approval statement is stale");
   const out = await withTx(deps.db, async (tx) => {
-    const p = (await tx.query("SELECT p.*, m.owner_id FROM payments p JOIN mandates m USING (mandate_id) WHERE p.payment_id = $1 FOR UPDATE OF p", [st.data.payment_id])).rows[0];
+    const p = (await tx.query("SELECT p.*, m.owner_id FROM payments p JOIN mandates m USING (mandate_id) WHERE p.payment_id = $1 FOR NO KEY UPDATE OF p", [st.data.payment_id])).rows[0];
     if (!p) throw new HttpError(404, "unknown payment");
     const owner = await ownerKey(tx, p.owner_id);
     // SAFETY: only the owner's key can release held money. The agent has no key, so it cannot approve itself.
@@ -378,7 +379,7 @@ async function lockPayment(tx: Tx, id: string): Promise<(PaymentRow & { revoked_
   return (
     await tx.query(
       `SELECT p.*, m.revoked_at, m.body, m.owner_id, o.paypal_vault_id FROM payments p
-       JOIN mandates m USING (mandate_id) JOIN owners o ON o.owner_id = m.owner_id WHERE p.payment_id = $1 FOR UPDATE OF p`,
+       JOIN mandates m USING (mandate_id) JOIN owners o ON o.owner_id = m.owner_id WHERE p.payment_id = $1 FOR NO KEY UPDATE OF p`,
       [id],
     )
   ).rows[0];
@@ -416,15 +417,21 @@ export async function jobAuthorize(deps: Deps, paymentId: string) {
   await withTx(deps.db, async (tx) => {
     const cur = await lockPayment(tx, paymentId);
     if (!cur || cur.state !== "RESERVED") return;
-    await tx.query("UPDATE payments SET state = 'AUTHORIZED', paypal_order_id = $2, paypal_authorization_id = $3, updated_at = now() WHERE payment_id = $1", [paymentId, res.orderId, res.authorizationId]);
-    await appendLedger(tx, "payment.authorized", { payment_id: paymentId, amount_cents: cur.amount_cents, paypal_order_id: res.orderId, paypal_authorization_id: res.authorizationId }, now);
     // SAFETY (G4): the owner may have revoked while PayPal was answering. Re-check before any capture.
     const dead = mandateStillLive(cur, now);
+    const holdForApproval = !dead && cur.needs_approval;
+    // One UPDATE only: a second update of the same row in this transaction would fire an FK check (KEY SHARE on the
+    // mandate) and could deadlock against a proposal holding the mandate lock.
+    await tx.query(
+      `UPDATE payments SET state = 'AUTHORIZED', paypal_order_id = $2, paypal_authorization_id = $3, updated_at = now(),
+         approval_expires_at = CASE WHEN $4 THEN now() + make_interval(secs => $5) ELSE approval_expires_at END
+       WHERE payment_id = $1`,
+      [paymentId, res.orderId, res.authorizationId, holdForApproval, deps.config.approvalTimeoutSeconds],
+    );
     if (dead) await enqueue(tx, "payment.void", { payment_id: paymentId, reason: dead });
-    else if (cur.needs_approval) {
-      await tx.query("UPDATE payments SET approval_expires_at = now() + make_interval(secs => $2) WHERE payment_id = $1", [paymentId, deps.config.approvalTimeoutSeconds]);
-      await enqueue(tx, "approval.expire", { payment_id: paymentId }, deps.config.approvalTimeoutSeconds);
-    } else await enqueue(tx, "payment.capture", { payment_id: paymentId });
+    else if (holdForApproval) await enqueue(tx, "approval.expire", { payment_id: paymentId }, deps.config.approvalTimeoutSeconds);
+    else await enqueue(tx, "payment.capture", { payment_id: paymentId });
+    await appendLedger(tx, "payment.authorized", { payment_id: paymentId, amount_cents: cur.amount_cents, paypal_order_id: res.orderId, paypal_authorization_id: res.authorizationId }, now);
   });
   deps.wake();
 }
@@ -458,8 +465,8 @@ export async function jobCapture(deps: Deps, paymentId: string) {
       if (!(e instanceof ProviderRejectedError)) throw e;
       // Capture definitively refused: release the hold rather than leave money in limbo.
       await tx.query("UPDATE payments SET last_error = $2, updated_at = now() WHERE payment_id = $1", [paymentId, e.message.slice(0, 500)]);
-      await appendLedger(tx, "payment.capture_rejected", { payment_id: paymentId, error: e.message.slice(0, 500) }, now);
       await enqueue(tx, "payment.void", { payment_id: paymentId, reason: "capture rejected" });
+      await appendLedger(tx, "payment.capture_rejected", { payment_id: paymentId, error: e.message.slice(0, 500) }, now);
       enqueuedVoid = true;
     }
   });
@@ -493,8 +500,8 @@ export async function jobExpireApproval(deps: Deps, paymentId: string) {
   await withTx(deps.db, async (tx) => {
     const r = await tx.query("UPDATE payments SET approval = 'EXPIRED', updated_at = now() WHERE payment_id = $1 AND approval = 'PENDING' AND state = 'AUTHORIZED' RETURNING payment_id", [paymentId]);
     if (!r.rowCount) return;
-    await appendLedger(tx, "approval.expired", { payment_id: paymentId }, deps.now());
     await enqueue(tx, "payment.void", { payment_id: paymentId, reason: "approval timed out" });
+    await appendLedger(tx, "approval.expired", { payment_id: paymentId }, deps.now());
   });
   deps.wake();
 }
@@ -518,8 +525,8 @@ export async function receiveWebhook(deps: Deps, headers: Record<string, string 
       [event.id, event.event_type, event.resource?.id ?? null, verified, rawBody],
     );
     if (!ins.rowCount) return; // PayPal redelivery: already have it
-    await appendLedger(tx, verified ? "webhook.received" : "webhook.rejected_unverified", { event_id: event.id, event_type: event.event_type, resource_id: event.resource?.id ?? null }, deps.now());
     if (verified) await enqueue(tx, "webhook.process", { event_id: event.id });
+    await appendLedger(tx, verified ? "webhook.received" : "webhook.rejected_unverified", { event_id: event.id, event_type: event.event_type, resource_id: event.resource?.id ?? null }, deps.now());
   });
   deps.wake();
   // SAFETY: unverified events are stored for audit but never change payment state.
@@ -536,6 +543,8 @@ export async function jobProcessWebhook(deps: Deps, eventId: string) {
     let pay = candidates.length ? (await tx.query("SELECT payment_id FROM payments WHERE payment_id = ANY($1::uuid[])", [candidates])).rows[0] : undefined;
     if (!pay) pay = (await tx.query("SELECT payment_id FROM payments WHERE paypal_authorization_id = $1 OR paypal_capture_id = $1 OR paypal_authorization_id = $2", [r.id, r.supplementary_data?.related_ids?.authorization_id ?? null])).rows[0];
     const now = deps.now();
+    // Mark processed first: the ledger append must be the transaction's last statement.
+    await tx.query("UPDATE webhook_events SET processed_at = now() WHERE event_id = $1", [eventId]);
     if (!pay) {
       await appendLedger(tx, "reconcile.unmatched", { event_id: eventId, event_type: payload.event_type, resource_id: r.id }, now);
     } else {
@@ -567,7 +576,6 @@ export async function jobProcessWebhook(deps: Deps, eventId: string) {
       if (status) await tx.query("UPDATE payments SET reconciliation = $2, reconciliation_note = $3 WHERE payment_id = $1", [p.payment_id, status, note]);
       await appendLedger(tx, "reconcile", { event_id: eventId, event_type: t, payment_id: p.payment_id, our_state: p.state, result: status ?? "NOTED" }, now);
     }
-    await tx.query("UPDATE webhook_events SET processed_at = now() WHERE event_id = $1", [eventId]);
   });
 }
 

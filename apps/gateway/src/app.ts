@@ -185,6 +185,13 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
         return rt.start(a.target, opts.config.agentToken);
       });
       app.get("/api/demo/redteam/:runId", async (req) => rt.get((req.params as { runId: string }).runId));
+      app.post("/api/demo/live", async (req) => {
+        const b = req.body as { statement: { target?: string }; signature: string; task?: string };
+        const a = await verifyOwnerAction(deps, b, "redteam-run");
+        const m = (await deps.db.query("SELECT owner_id FROM mandates WHERE mandate_id = $1", [a.target ?? ""])).rows[0];
+        if (!m || m.owner_id !== a.owner_id) throw new HttpError(404, "mandate not found for this owner");
+        return rt.startLive(a.target!, opts.config.agentToken, String(b.task ?? "Do this week's restock."));
+      });
     }
   }
 

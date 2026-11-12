@@ -38,6 +38,16 @@ export const DEMO_INTENT =
 
 export const DEMO_AGENT_ID = "restock-agent";
 
+export const DEMO_MANDATE_DEFAULTS = {
+  budget: { period: "month" as const, limit_cents: 40_000 },
+  per_order_cap_cents: 25_000,
+  approval_threshold_cents: 15_000,
+  allowed_categories: ["coffee", "dairy-alt", "disposables", "syrups"],
+  allowed_merchants: [DEMO_MERCHANT],
+  max_units_per_line: 12,
+  max_units_per_order: 40,
+};
+
 /** Mandate template for the demo owner. Times are filled in at signing. */
 export function demoMandate(params: { mandate_id: string; owner_id: string; now: Date; days?: number }): MandateBody {
   const from = new Date(params.now.getTime() - 60_000);
@@ -50,13 +60,10 @@ export function demoMandate(params: { mandate_id: string; owner_id: string; now:
     agent_id: DEMO_AGENT_ID,
     intent: DEMO_INTENT,
     currency: "USD",
-    budget: { period: "month", limit_cents: 40_000 },
-    per_order_cap_cents: 25_000,
-    approval_threshold_cents: 15_000,
-    allowed_categories: ["coffee", "dairy-alt", "disposables", "syrups"],
-    allowed_merchants: [DEMO_MERCHANT],
-    max_units_per_line: 12,
-    max_units_per_order: 40,
+    ...DEMO_MANDATE_DEFAULTS,
+    budget: { ...DEMO_MANDATE_DEFAULTS.budget },
+    allowed_categories: [...DEMO_MANDATE_DEFAULTS.allowed_categories],
+    allowed_merchants: [...DEMO_MANDATE_DEFAULTS.allowed_merchants],
     ship_to: DEMO_SHIP_TO,
     valid_from: iso(from),
     valid_until: iso(until),

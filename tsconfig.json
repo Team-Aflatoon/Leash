@@ -15,5 +15,5 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["packages/*/src", "packages/*/test", "apps/gateway/src", "apps/gateway/test", "apps/agent/src", "apps/agent/test", "vitest*.ts"]
+  "include": ["packages/*/src", "packages/*/test", "apps/gateway/src", "apps/gateway/test", "apps/gateway/scripts", "apps/agent/src", "apps/agent/test", "vitest*.ts"]
 }

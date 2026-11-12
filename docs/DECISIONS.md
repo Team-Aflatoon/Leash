@@ -67,3 +67,25 @@ mandate.
 ## D9. Hosting: Render (Docker web service + Render Postgres)
 
 Sponsor-eligible per the PDF, `render.yaml` blueprint in the repo. Railway works identically from the Dockerfile.
+
+## D10. Lock ordering (found by the red-team test)
+
+The first full red-team run deadlocked: a transaction that already held the ledger-head lock updated a payment row
+a second time, which fires Postgres's FK check (`KEY SHARE` on the mandate), while a proposal held the mandate with
+`FOR UPDATE` and waited for the ledger head. Rules now:
+1. Mandate and payment rows are locked with `FOR NO KEY UPDATE` (still serialises proposals per mandate; doesn't
+   conflict with FK checks).
+2. `appendLedger` is the **last statement** of every transaction, so the global head lock is held only for the
+   final insert.
+3. A row is updated at most once per transaction where possible.
+Regression coverage: the red-team test (6 concurrent orders while the worker authorizes and captures) and the
+50-way budget test, repeated 3× with zero `deadlock detected` lines in the server log after the fix.
+
+## D11. LLM usage
+
+- Model `claude-opus-5-5` (configurable via `LLM_MODEL`), structured outputs via Zod, server-side refusal
+  fallback (`fallbacks: "default"`). A refusal or unparseable answer is an `error` verdict → HOLD (fail closed).
+- Intent check runs at effort `low` (it is a classification), mandate drafting at `medium`, the live shopping agent
+  at `medium` with the SDK tool runner (max 10 iterations).
+- The intent checker never sees product descriptions (merchant-controlled text), only titles, categories,
+  quantities and prices the gateway resolved. The agent's note is passed as delimited, untrusted data.
