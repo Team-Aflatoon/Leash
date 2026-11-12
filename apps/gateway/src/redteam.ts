@@ -40,6 +40,8 @@ export interface RunnerOptions {
   gatewayUrl: string;
   /** LLM credentials handed to the LIVE agent only. Use a separate, spend-capped key (AGENT_ANTHROPIC_API_KEY). */
   agentLlm: { provider: "gemini" | "anthropic"; apiKey: string; model: string } | null;
+  /** Groq credentials for the live agent: fallback behind Gemini, or the only provider (D14). */
+  agentGroq?: { apiKey: string; models: string[] } | null;
   /** Mint a per-run token scoped to one mandate (review R1). */
   mint: (mandateId: string) => Promise<string>;
   /** Global cap on concurrently running agent processes (review R4). */
@@ -105,9 +107,14 @@ export function createAgentRunner(opts: RunnerOptions): RedTeamRunner {
       return launch("redteam", mandateId, ownerId, {});
     },
     async startLive(mandateId, ownerId, task) {
-      if (!opts.agentLlm) throw new HttpError(400, "live agent needs an LLM key");
-      const keyVar = opts.agentLlm.provider === "gemini" ? "GEMINI_API_KEY" : "ANTHROPIC_API_KEY";
-      return launch("live", mandateId, ownerId, { TASK: task.slice(0, 1000), LLM_PROVIDER: opts.agentLlm.provider, [keyVar]: opts.agentLlm.apiKey, LLM_MODEL: opts.agentLlm.model });
+      const llm = opts.agentLlm;
+      const groq = opts.agentGroq ?? null;
+      if (!llm && !groq) throw new HttpError(400, "live agent needs an LLM key");
+      const extra: Record<string, string> = { TASK: task.slice(0, 1000) };
+      if (llm) Object.assign(extra, { LLM_PROVIDER: llm.provider, [llm.provider === "gemini" ? "GEMINI_API_KEY" : "ANTHROPIC_API_KEY"]: llm.apiKey, LLM_MODEL: llm.model });
+      else extra.LLM_PROVIDER = "groq";
+      if (groq) Object.assign(extra, { GROQ_API_KEY: groq.apiKey, GROQ_MODELS: groq.models.join(",") });
+      return launch("live", mandateId, ownerId, extra);
     },
     async get(runId) {
       const r = runs.get(runId);

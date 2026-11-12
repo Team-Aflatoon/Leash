@@ -10,7 +10,7 @@ import type { MandateDraft, MandateDrafter } from "./llm.ts";
  * structured JSON, validated with zod, and any failure (error, safety block, bad JSON) fails closed.
  */
 
-const IntentOut = z.object({ verdict: z.enum(["consistent", "suspicious"]), rationale: z.string() });
+export const IntentOut = z.object({ verdict: z.enum(["consistent", "suspicious"]), rationale: z.string() });
 const INTENT_SCHEMA = {
   type: "object",
   properties: {
@@ -30,14 +30,24 @@ export const GEMINI_FALLBACK_MODELS = (process.env.GEMINI_FALLBACK_MODELS ?? "ge
 const transient = (e: unknown) =>
   /\b(503|429|500|UNAVAILABLE|RESOURCE_EXHAUSTED|aborted|fetch failed|ECONNRESET)\b|high demand|timed? ?out/i.test(String((e as Error)?.message ?? e));
 
+export interface GeminiRetryOptions {
+  timeoutMs?: number;
+  fallbackModels?: string[];
+  /** Cap on attempts. With a cross-provider fallback configured we give Gemini two short tries, then hand over. */
+  maxAttempts?: number;
+}
+
+/** Retry budget used when another provider (Groq) stands behind Gemini: fail over in ~30s instead of ~2 minutes. */
+export const GEMINI_FAST_FAILOVER: GeminiRetryOptions = { maxAttempts: 2, timeoutMs: 15_000 };
+
 export async function generateWithRetry(
   ai: GoogleGenAI,
   model: string,
   params: Omit<Parameters<GoogleGenAI["models"]["generateContent"]>[0], "model">,
-  opts: { timeoutMs?: number; fallbackModels?: string[]; sleep?: (ms: number) => Promise<void> } = {},
+  opts: GeminiRetryOptions & { sleep?: (ms: number) => Promise<void> } = {},
 ) {
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
-  const plan = [model, ...(opts.fallbackModels ?? GEMINI_FALLBACK_MODELS).filter((m) => m !== model), model];
+  const plan = [model, ...(opts.fallbackModels ?? GEMINI_FALLBACK_MODELS).filter((m) => m !== model), model].slice(0, Math.max(1, opts.maxAttempts ?? Infinity));
   let last: unknown;
   for (let i = 0; i < plan.length; i++) {
     try {
@@ -61,7 +71,7 @@ function blocked(res: { promptFeedback?: { blockReason?: unknown }; candidates?:
 export class GeminiIntentChecker implements IntentChecker {
   readonly promptVersion = "intent-v1-gemini";
   private ai: GoogleGenAI;
-  constructor(apiKey: string, readonly model: string) {
+  constructor(apiKey: string, readonly model: string, private readonly retry: GeminiRetryOptions = {}) {
     this.ai = new GoogleGenAI({ apiKey });
   }
 
@@ -70,7 +80,7 @@ export class GeminiIntentChecker implements IntentChecker {
       const res = await generateWithRetry(this.ai, this.model, {
         contents: buildIntentPrompt(input),
         config: { systemInstruction: INTENT_SYSTEM, responseMimeType: "application/json", responseJsonSchema: INTENT_SCHEMA, temperature: 0 },
-      });
+      }, this.retry);
       const why = blocked(res);
       if (why) return { kind: "error", error: why };
       const parsed = IntentOut.safeParse(JSON.parse(res.text ?? ""));
@@ -84,7 +94,7 @@ export class GeminiIntentChecker implements IntentChecker {
 
 const CATEGORIES = [...new Set(DEMO_CATALOG.map((c) => c.category))];
 const cents = z.number().int().min(0).max(10_000_000);
-const DraftOut = z.object({
+export const DraftOut = z.object({
   budget_limit_cents: cents,
   per_order_cap_cents: cents,
   approval_threshold_cents: cents,
@@ -113,7 +123,7 @@ const DRAFT_SCHEMA = {
   required: ["budget_limit_cents", "per_order_cap_cents", "approval_threshold_cents", "allowed_categories", "max_units_per_line", "max_units_per_order", "has_address", "address", "notes"],
 };
 
-const DRAFT_SYSTEM = `You turn a business owner's plain-English spending instructions into a structured mandate for a
+export const DRAFT_SYSTEM = `You turn a business owner's plain-English spending instructions into a structured mandate for a
 shopping agent. The owner reviews every field before signing, so be conservative and explicit.
 Rules: money is integer US cents ("$400 a month" is budget_limit_cents 40000). Use only these categories:
 ${CATEGORIES.join(", ")}. If no per-order cap is given use the monthly budget; if no approval threshold, half the
@@ -122,7 +132,7 @@ address (otherwise fill address with empty strings). Add one short note for ever
 
 export class GeminiMandateDrafter implements MandateDrafter {
   private ai: GoogleGenAI;
-  constructor(apiKey: string, private readonly model: string) {
+  constructor(apiKey: string, private readonly model: string, private readonly retry: GeminiRetryOptions = {}) {
     this.ai = new GoogleGenAI({ apiKey });
   }
 
@@ -136,7 +146,7 @@ export class GeminiMandateDrafter implements MandateDrafter {
           contents: `<owner_instructions>\n${intent}\n</owner_instructions>`,
           config: { systemInstruction: DRAFT_SYSTEM, responseMimeType: "application/json", responseJsonSchema: DRAFT_SCHEMA, temperature: 0 },
         },
-        { timeoutMs: 30_000 },
+        { timeoutMs: 30_000, ...this.retry },
       );
       if (!blocked(res)) {
         const p = DraftOut.safeParse(JSON.parse(res.text ?? ""));
@@ -145,22 +155,27 @@ export class GeminiMandateDrafter implements MandateDrafter {
     } catch {
       d = null;
     }
-    if (!d) return templateDraft(intent, ["The model could not draft this mandate; showing the template. Edit before signing."]);
-    const cats = d.allowed_categories.filter((c) => CATEGORIES.includes(c));
-    const budget = Math.max(1, d.budget_limit_cents);
-    const addr = d.address;
-    return {
-      intent,
-      budget: { period: "month", limit_cents: budget },
-      per_order_cap_cents: Math.max(1, Math.min(d.per_order_cap_cents || budget, budget)),
-      approval_threshold_cents: d.approval_threshold_cents,
-      allowed_categories: cats.length ? cats : DEMO_MANDATE_DEFAULTS.allowed_categories,
-      allowed_merchants: [...DEMO_MANDATE_DEFAULTS.allowed_merchants],
-      max_units_per_line: d.max_units_per_line,
-      max_units_per_order: d.max_units_per_order,
-      ship_to: d.has_address && addr.line1 && /^[A-Z]{2}$/.test(addr.country_code) ? addr : null,
-      notes: d.notes,
-      source: "llm",
-    };
+    return draftFromModel(intent, d);
   }
+}
+
+/** Turns validated model output into a draft, clamping it to the catalog. Unusable output gives the template. */
+export function draftFromModel(intent: string, d: z.infer<typeof DraftOut> | null): MandateDraft {
+  if (!d) return templateDraft(intent, ["The model could not draft this mandate; showing the template. Edit before signing."]);
+  const cats = d.allowed_categories.filter((c) => CATEGORIES.includes(c));
+  const budget = Math.max(1, d.budget_limit_cents);
+  const addr = d.address;
+  return {
+    intent,
+    budget: { period: "month", limit_cents: budget },
+    per_order_cap_cents: Math.max(1, Math.min(d.per_order_cap_cents || budget, budget)),
+    approval_threshold_cents: d.approval_threshold_cents,
+    allowed_categories: cats.length ? cats : DEMO_MANDATE_DEFAULTS.allowed_categories,
+    allowed_merchants: [...DEMO_MANDATE_DEFAULTS.allowed_merchants],
+    max_units_per_line: d.max_units_per_line,
+    max_units_per_order: d.max_units_per_order,
+    ship_to: d.has_address && addr.line1 && /^[A-Z]{2}$/.test(addr.country_code) ? addr : null,
+    notes: d.notes,
+    source: "llm",
+  };
 }

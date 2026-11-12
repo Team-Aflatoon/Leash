@@ -39,6 +39,8 @@ mutate "R6 unverified webhooks stored"      apps/gateway/src/service.ts 'if (!ve
 mutate "R9 approval expiry unchecked"       apps/gateway/src/service.ts 'if (approved && p.approval_expires_at &&' 'if (false && p.approval_expires_at &&' "expired holds"
 mutate "Plan B hold limit ignored"          packages/core/src/policy.ts 'total > input.fundingRemainingCents)' 'false)' "overdraw one hold"
 mutate "Plan B in-doubt capture released"    apps/gateway/src/service.ts 'if (dead && !(p.funding === "hold" && p.capture_sent_at)) {' 'if (dead) {' "answer was lost"
+mutate "D14 fallback on any LLM error"       apps/gateway/src/groq.ts 'if (v.kind !== "error" || !isAvailabilityError(v.error)) return v;' 'if (v.kind !== "error") return v;' "safety block does not fall back"
+mutate "D14 repeated cart gets a new key"     apps/agent/src/shopper.ts 'if (!body) sent.set(' 'if (true) sent.set(' "never runs a tool twice"
 
 echo; echo "killed $pass, survived/errored $fail"
 [ "$fail" -eq 0 ]

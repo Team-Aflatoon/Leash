@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { generateKeyPair, publicKeyFromSecret, sha256Hex } from "@leash/core";
+import { generateKeyPair, parseGroqModels, publicKeyFromSecret, sha256Hex } from "@leash/core";
 
 export interface Config {
   port: number;
@@ -15,6 +15,9 @@ export interface Config {
   llm: LlmConfig | null;
   /** Credentials handed to the live agent process. Prefer a separate, spend-capped key (review R8). */
   agentLlm: LlmConfig | null;
+  /** Groq: the fallback behind Gemini, or the only LLM when it is the only key (D14). */
+  groq: GroqConfig | null;
+  agentGroq: GroqConfig | null;
   trustProxyHops: number | false;
   maxAgentRuns: number;
   /** auto: try Vault, fall back to a standing hold if PayPal refuses (D13). */
@@ -29,6 +32,17 @@ export interface LlmConfig {
   model: string;
 }
 
+export interface GroqConfig {
+  apiKey: string;
+  models: string[];
+}
+
+/** Groq key and model chain. AGENT_GROQ_API_KEY lets the live agent use its own key. */
+export function pickGroq(env: NodeJS.ProcessEnv, forAgent: boolean): GroqConfig | null {
+  const apiKey = (forAgent ? env.AGENT_GROQ_API_KEY : undefined) ?? env.GROQ_API_KEY;
+  return apiKey ? { apiKey, models: parseGroqModels(env.GROQ_MODELS) } : null;
+}
+
 const DEFAULT_MODEL: Record<LlmProvider, string> = { gemini: "gemini-flash-latest", anthropic: "claude-opus-5-5" };
 
 /** LLM_PROVIDER picks explicitly; otherwise Gemini when GEMINI_API_KEY is set, else Anthropic when its key is set. */
@@ -37,8 +51,9 @@ export function pickLlm(env: NodeJS.ProcessEnv, forAgent: boolean): LlmConfig | 
     gemini: (forAgent ? env.AGENT_GEMINI_API_KEY : undefined) ?? env.GEMINI_API_KEY,
     anthropic: (forAgent ? env.AGENT_ANTHROPIC_API_KEY : undefined) ?? env.ANTHROPIC_API_KEY,
   };
+  if (env.LLM_PROVIDER === "groq") return null; // Groq only: see pickGroq
   const explicit = env.LLM_PROVIDER as LlmProvider | undefined;
-  if (explicit && explicit !== "gemini" && explicit !== "anthropic") throw new Error("LLM_PROVIDER must be gemini or anthropic");
+  if (explicit && explicit !== "gemini" && explicit !== "anthropic") throw new Error("LLM_PROVIDER must be gemini, anthropic or groq");
   const provider: LlmProvider | null = explicit ?? (keys.gemini ? "gemini" : keys.anthropic ? "anthropic" : null);
   if (!provider || !keys[provider]) return null;
   const model = (provider === "gemini" ? env.GEMINI_MODEL : env.ANTHROPIC_MODEL) ?? env.LLM_MODEL ?? DEFAULT_MODEL[provider];
@@ -79,6 +94,8 @@ export function loadConfig(env = process.env): Config {
     paypal,
     llm: pickLlm(env, false),
     agentLlm: pickLlm(env, true),
+    groq: pickGroq(env, false),
+    agentGroq: pickGroq(env, true),
     trustProxyHops: env.TRUST_PROXY_HOPS ? Number(env.TRUST_PROXY_HOPS) : false,
     maxAgentRuns: Number(env.MAX_AGENT_RUNS ?? 3),
     consentMode: env.PAYPAL_CONSENT_MODE === "vault" || env.PAYPAL_CONSENT_MODE === "hold" ? env.PAYPAL_CONSENT_MODE : "auto",

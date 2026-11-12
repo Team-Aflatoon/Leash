@@ -81,11 +81,15 @@ export async function decide(o: OwnerIdentity, payment_id: string, decision: "ap
 }
 
 // ---- server shapes ------------------------------------------------------------------------------------------------
+export type LlmProvider = "gemini" | "anthropic" | "groq";
+
 export interface ServerConfig {
   demo_mode: boolean;
   paypal_configured: boolean;
   llm_configured: boolean;
-  llm_provider: "gemini" | "anthropic" | null;
+  llm_provider: LlmProvider | null;
+  /** Provider that takes over when the primary is unavailable. */
+  llm_fallback: LlmProvider | null;
   payment_provider: string;
   gateway_public_key_hex: string;
   agent_id: string;

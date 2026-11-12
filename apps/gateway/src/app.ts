@@ -35,7 +35,7 @@ declare module "fastify" {
 
 export interface AppOptions {
   deps: Deps;
-  config: Pick<Config, "gatewayPublicKeyHex" | "gatewaySecretKeyHex" | "demoMode" | "publicUrl"> & { paypalConfigured: boolean; llmConfigured: boolean; llmProvider?: string | null; trustProxyHops?: number | false };
+  config: Pick<Config, "gatewayPublicKeyHex" | "gatewaySecretKeyHex" | "demoMode" | "publicUrl"> & { paypalConfigured: boolean; llmConfigured: boolean; llmProvider?: string | null; llmFallback?: string | null; trustProxyHops?: number | false };
   drafter: MandateDrafter;
   redteam?: RedTeamRunner;
   rateLimit?: boolean;
@@ -114,6 +114,7 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
     paypal_configured: opts.config.paypalConfigured,
     llm_configured: opts.config.llmConfigured,
     llm_provider: opts.config.llmProvider ?? null,
+    llm_fallback: opts.config.llmFallback ?? null,
     payment_provider: deps.provider.name,
     gateway_public_key_hex: opts.config.gatewayPublicKeyHex,
     agent_id: DEMO_AGENT_ID,

@@ -90,7 +90,7 @@ export function App() {
             {tab === "Decisions" && <DecisionsGrid rows={data.decisions} />}
             {tab === "Ledger" && <LedgerView refreshKey={Math.floor(tick / 5)} />}
             {tab === "Mandate" && <MandateView owner={owner} data={data} paypalConfigured={!!config?.paypal_configured} onChanged={refresh} />}
-            {tab === "Live agent" && <LiveAgent owner={owner} data={data} llm={!!config?.llm_configured} provider={config?.llm_provider ?? null} onChanged={refresh} />}
+            {tab === "Live agent" && <LiveAgent owner={owner} data={data} llm={!!config?.llm_configured} provider={config?.llm_provider ?? null} fallback={config?.llm_fallback ?? null} onChanged={refresh} />}
           </>
         )}
       </main>

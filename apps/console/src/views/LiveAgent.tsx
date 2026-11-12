@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api, ownerAction, usd, type Dashboard, type OwnerIdentity } from "../api";
+import { api, ownerAction, usd, type Dashboard, type LlmProvider, type OwnerIdentity } from "../api";
 import { ErrorNote, Notice, OutcomeChip, Section } from "../ui/bits";
 
 interface Ev {
@@ -9,9 +9,14 @@ interface Ev {
   result?: { outcome?: string; reasons?: { code: string; message: string }[]; total_cents?: number } & Record<string, unknown>;
   error?: string;
   text?: string;
+  provider?: LlmProvider;
+  model?: string;
+  reason?: string;
 }
 
-export function LiveAgent({ owner, data, llm, provider, onChanged }: { owner: OwnerIdentity; data: Dashboard; llm: boolean; provider: "gemini" | "anthropic" | null; onChanged: () => void }) {
+const PROVIDER_NAME: Record<LlmProvider, string> = { gemini: "Gemini", anthropic: "Claude", groq: "Groq" };
+
+export function LiveAgent({ owner, data, llm, provider, fallback, onChanged }: { owner: OwnerIdentity; data: Dashboard; llm: boolean; provider: LlmProvider | null; fallback: LlmProvider | null; onChanged: () => void }) {
   const active = data.mandates.find((m) => !m.revoked_at && Date.parse(m.body.valid_until) > Date.now());
   const [task, setTask] = useState("Do this week’s restock. We’re low on espresso beans and oat milk, and the vanilla syrup is nearly gone.");
   const [events, setEvents] = useState<Ev[]>([]);
@@ -47,7 +52,7 @@ export function LiveAgent({ owner, data, llm, provider, onChanged }: { owner: Ow
       <div className="space-y-2">
         <h1 className="text-2xl text-fg">Give the real agent a task</h1>
         <p className="max-w-[70ch] text-fg-2">
-          A live {provider === "anthropic" ? "Claude" : provider === "gemini" ? "Gemini" : "LLM"} agent with three tools: read its mandate, search the catalog, propose an order. It reads every merchant description, the poisoned one too. Whatever it
+          A live {provider ? PROVIDER_NAME[provider] : "LLM"} agent{fallback ? ` (${PROVIDER_NAME[fallback]} takes over if it is overloaded)` : ""} with three tools: read its mandate, search the catalog, propose an order. It reads every merchant description, the poisoned one too. Whatever it
           decides, the gateway has the last word. Live runs vary; the red team is the repeatable demo.
         </p>
       </div>
@@ -90,6 +95,14 @@ export function LiveAgent({ owner, data, llm, provider, onChanged }: { owner: Ow
                         <p className={e.error ? "text-stop" : "text-dim"}>{e.error ? `Failed: ${e.error}` : Array.isArray(e.result) ? `${e.result.length} results` : "Done"}</p>
                       )}
                     </>
+                  )}
+                  {e.type === "provider" && (
+                    <p className={e.reason ? "text-fg-2" : "text-dim"}>
+                      {e.reason
+                        ? `The first model was unavailable, so ${PROVIDER_NAME[e.provider ?? "groq"]} took over for the rest of the run.`
+                        : `Running on ${PROVIDER_NAME[e.provider ?? "gemini"]}.`}{" "}
+                      <span className="mono text-xs text-dim">{e.model}</span>
+                    </p>
                   )}
                   {e.type === "final" && (
                     <>
