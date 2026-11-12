@@ -85,6 +85,7 @@ export interface ServerConfig {
   demo_mode: boolean;
   paypal_configured: boolean;
   llm_configured: boolean;
+  llm_provider: "gemini" | "anthropic" | null;
   payment_provider: string;
   gateway_public_key_hex: string;
   agent_id: string;

@@ -73,7 +73,7 @@ export function MandateView({ owner, data, paypalConfigured, onChanged }: { owne
   const ship = draft?.ship_to ?? DEMO_SHIP_TO;
 
   return (
-    <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+    <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
       <div className="space-y-6">
         <h1 className="text-2xl text-fg">Set what the agent may spend</h1>
         <Section title="1. Link PayPal once">

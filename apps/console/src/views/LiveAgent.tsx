@@ -11,7 +11,7 @@ interface Ev {
   text?: string;
 }
 
-export function LiveAgent({ owner, data, llm, onChanged }: { owner: OwnerIdentity; data: Dashboard; llm: boolean; onChanged: () => void }) {
+export function LiveAgent({ owner, data, llm, provider, onChanged }: { owner: OwnerIdentity; data: Dashboard; llm: boolean; provider: "gemini" | "anthropic" | null; onChanged: () => void }) {
   const active = data.mandates.find((m) => !m.revoked_at && Date.parse(m.body.valid_until) > Date.now());
   const [task, setTask] = useState("Do this week’s restock. We’re low on espresso beans and oat milk, and the vanilla syrup is nearly gone.");
   const [events, setEvents] = useState<Ev[]>([]);
@@ -47,11 +47,11 @@ export function LiveAgent({ owner, data, llm, onChanged }: { owner: OwnerIdentit
       <div className="space-y-2">
         <h1 className="text-2xl text-fg">Give the real agent a task</h1>
         <p className="max-w-[70ch] text-fg-2">
-          A live Claude agent with three tools: read its mandate, search the catalog, propose an order. It reads every merchant description, the poisoned one too. Whatever it
+          A live {provider === "anthropic" ? "Claude" : provider === "gemini" ? "Gemini" : "LLM"} agent with three tools: read its mandate, search the catalog, propose an order. It reads every merchant description, the poisoned one too. Whatever it
           decides, the gateway has the last word. Live runs vary; the red team is the repeatable demo.
         </p>
       </div>
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,420px)_minmax(0,1fr)]">
+      <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,420px)_minmax(0,1fr)]">
         <Section title="Task">
           <label className="block space-y-1.5">
             <span className="label">What should it do?</span>

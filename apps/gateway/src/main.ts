@@ -71,7 +71,7 @@ wake = worker.wake;
 
 const app = await buildApp({
   deps,
-  config: { ...config, paypalConfigured: !!config.paypal, llmConfigured: !!config.llm },
+  config: { ...config, paypalConfigured: !!config.paypal, llmConfigured: !!config.llm, llmProvider: config.llm?.provider ?? null },
   drafter,
   redteam: createAgentRunner({ gatewayUrl: `http://127.0.0.1:${config.port}`, agentLlm: config.agentLlm, mint: (id) => mintAgentToken(db, id), maxActive: config.maxAgentRuns }),
 });
