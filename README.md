@@ -94,8 +94,8 @@ decide everything, and the intent check reports "not configured".
 
 ## Deploy (Render)
 
-`render.yaml` is a Blueprint for one Docker web service and one Postgres database. Create it from the repo, then
-fill in `PUBLIC_URL`, `PAYPAL_*` and `ANTHROPIC_API_KEY`. The same Dockerfile works on Railway.
+Free plans only: Render free web service (`render.yaml` Blueprint, Docker) plus Neon free Postgres. Step-by-step
+guide: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ## Security
 

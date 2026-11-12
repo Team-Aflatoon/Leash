@@ -41,5 +41,5 @@ Last updated: 2026-11-12. Local repo only; no remote yet.
 1. With sandbox credentials: run the spike. If P4 (no-redirect vaulted authorize) fails, implement the fallback in
    docs/PLAN.md (per-order buyer approval) behind the same `PaymentProvider` interface.
 2. With an LLM key: one red-team run (warms the verdict cache), then check that the honest scenario gets `consistent`.
-3. Deploy on Render, set the env vars, register the webhook, link PayPal once on the hosted demo, run the red team
+3. Deploy (free plans: Render + Neon, see docs/DEPLOYMENT.md), set the env vars, register the webhook, link PayPal once on the hosted demo, run the red team
    once to warm the verdict cache, fill in the README placeholders, record the video.
