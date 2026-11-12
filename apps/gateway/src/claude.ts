@@ -7,7 +7,9 @@ import type { MandateDraft, MandateDrafter } from "./llm.ts";
 
 // Server-side refusal fallback (opt-in default for current models): a policy decline is retried on a fallback model
 // inside the same call. A refusal that still stands is handled below (fail closed).
-const FALLBACK = { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" } as const;
+// Haiku has no server-side fallback, so the parameter is only sent to models that support it.
+const fallbackFor = (model: string) =>
+  /haiku/.test(model) ? {} : { betas: ["server-side-fallback-2026-07-01"] as Anthropic.Beta.AnthropicBeta[], fallbacks: "default" as const };
 
 const IntentOut = z.object({
   verdict: z.enum(["consistent", "suspicious"]),
@@ -42,8 +44,7 @@ export class ClaudeIntentChecker implements IntentChecker {
       const res = await this.client.beta.messages.parse({
         model: this.model,
         max_tokens: 2000,
-        ...FALLBACK,
-        betas: [...FALLBACK.betas],
+        ...fallbackFor(this.model),
         output_config: { effort: "low", format: betaZodOutputFormat(IntentOut) },
         system: INTENT_SYSTEM,
         messages: [{ role: "user", content: user }],
@@ -96,8 +97,7 @@ export class ClaudeMandateDrafter implements MandateDrafter {
     const res = await this.client.beta.messages.parse({
       model: this.model,
       max_tokens: 4000,
-      ...FALLBACK,
-      betas: [...FALLBACK.betas],
+      ...fallbackFor(this.model),
       output_config: { effort: "medium", format: betaZodOutputFormat(DraftOut) },
       system: DRAFT_SYSTEM,
       messages: [{ role: "user", content: `<owner_instructions>\n${intent}\n</owner_instructions>` }],
