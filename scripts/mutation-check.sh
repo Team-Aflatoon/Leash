@@ -7,8 +7,10 @@ cd "$(dirname "$0")/.."
 pass=0; fail=0
 mutate() {
   local name="$1" file="$2" from="$3" to="$4" test="$5"
-  if ! grep -qF -- "$from" "$file"; then echo "?? $name: pattern not found in $file"; fail=$((fail+1)); return; fi
-  node -e 'const fs=require("fs");const [f,a,b]=process.argv.slice(1);fs.writeFileSync(f,fs.readFileSync(f,"utf8").split(a).join(b))' "$file" "$from" "$to"
+  # Several replacements in one mutant: separate them with "@@" in both FROM and TO.
+  if ! node -e 'const fs=require("fs");const [f,a,b]=process.argv.slice(1);let s=fs.readFileSync(f,"utf8");const A=a.split("@@"),B=b.split("@@");for(let i=0;i<A.length;i++){if(!s.includes(A[i]))process.exit(3);s=s.split(A[i]).join(B[i]??"")}fs.writeFileSync(f,s)' "$file" "$from" "$to"; then
+    echo "?? $name: pattern not found in $file"; fail=$((fail+1)); git checkout -- "$file"; return
+  fi
   if npx vitest run -t "$test" >/tmp/leash-mut.log 2>&1; then
     echo "SURVIVED  $name  (test '$test' still passes — guard is untested!)"; fail=$((fail+1))
   elif grep -qE "SyntaxError|Transform failed|ERR_MODULE" /tmp/leash-mut.log; then
@@ -19,7 +21,7 @@ mutate() {
   git checkout -- "$file"
 }
 
-mutate "G5 mandate row lock removed"        apps/gateway/src/service.ts 'WHERE mandate_id = $1 FOR NO KEY UPDATE", [p.mandate_id]' 'WHERE mandate_id = $1", [p.mandate_id]' "never exceed"
+mutate "G5 decision locks removed"          apps/gateway/src/service.ts 'WHERE mandate_id = $1 FOR NO KEY UPDATE", [p.mandate_id]@@FROM owners WHERE owner_id = $1 FOR NO KEY UPDATE", [row.owner_id]' 'WHERE mandate_id = $1", [p.mandate_id]@@FROM owners WHERE owner_id = $1", [row.owner_id]' "never exceed"
 mutate "G5 idempotency unique index removed" apps/gateway/migrations/001_init.sql 'CREATE UNIQUE INDEX decisions_idem' 'CREATE INDEX decisions_idem' "20 concurrent copies"
 mutate "G2 address lock disabled"           packages/core/src/policy.ts 'if (proposal.ship_to && !sameAddress' 'if (false && proposal.ship_to && !sameAddress' "redirected shipping address"
 mutate "G2 price claim ignored"             packages/core/src/policy.ts 'pl.claimed_unit_price_cents !== item.unit_price_cents)' 'false)' "lowballed price"
