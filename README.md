@@ -7,7 +7,7 @@ Leash sits between a shopping agent and PayPal. The agent never holds payment cr
 a purchase. The gateway checks the proposal against a mandate the owner signed with their own key, decides
 ALLOW, HOLD or BLOCK with plain deterministic rules, and only then moves money through the PayPal sandbox.
 
-- **Live demo:** `<DEMO_URL>`. Click **Run red team**.
+- **Live demo:** https://leash-pwu7.onrender.com. Click **Run red team**.
 - **Video (< 3 min):** `<VIDEO_URL>`
 - **License:** MIT
 

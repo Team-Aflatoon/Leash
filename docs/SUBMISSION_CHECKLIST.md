@@ -20,7 +20,7 @@ points at real files or commands. Items marked **YOU** need the owner's accounts
 - [ ] Spike run recorded in `docs/SANDBOX_LOG.md` with "P4 CONFIRMED"
 - [ ] Hosted demo: create owner → link PayPal → Run red team → 6/6
 - [ ] Webhook registered; a capture shows "CONFIRMED" in the Decisions grid's Webhook column
-- [ ] README placeholders filled: `<DEMO_URL>`, `<VIDEO_URL>`, `<SANDBOX_BUYER_EMAIL>`, `<SANDBOX_BUYER_PASSWORD>`
+- [ ] README placeholders filled: https://leash-pwu7.onrender.com, `<VIDEO_URL>`, `<SANDBOX_BUYER_EMAIL>`, `<SANDBOX_BUYER_PASSWORD>`
 - [ ] Video public on YouTube, under 3:00
 - [ ] Devpost text pasted from `docs/DEVPOST.md`
 - [ ] Only one sponsor prize can be won: pick AG Grid as the primary sponsor track
