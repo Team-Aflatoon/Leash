@@ -33,3 +33,14 @@ Real PayPal sandbox runs, appended by `pnpm --filter @leash/gateway spike`.
   the same, fixed only by PayPal enabling the account or after the account propagates
   ([thread](https://www.paypal-community.com/t5/Sandbox-Environment/NOT-ENABLED-TO-VAULT-PAYMENT-SOURCE/m-p/3182847)).
 - Decision: keep watching Vault; build the brief's documented fallback (one approval per mandate) in parallel.
+
+## 2026-11-12T11:08:33.449Z: Plan B spike (one approval, partial captures)
+
+- create $400 AUTHORIZE order: HTTP 200, status PAYER_ACTION_REQUIRED, order 2D096375AF742993M
+- authorize after buyer approval: HTTP 201, order COMPLETED, authorization 3GP16022CB6725545 CREATED 400.00, expires 2026-12-11T11:09:25Z
+- partial capture 1 ($86.40, final_capture false): HTTP 201, COMPLETED 1BV51717H9099461D
+- retry capture 1 with same PayPal-Request-Id: HTTP 200, same capture id: true
+- partial capture 2 ($108.00, final_capture false): HTTP 201, COMPLETED 39K00985LB548745D
+- authorization after captures: PARTIALLY_CAPTURED
+- void the remainder: HTTP 200  ""
+- authorization after void: VOIDED
