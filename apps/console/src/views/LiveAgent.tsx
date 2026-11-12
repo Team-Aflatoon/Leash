@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, ownerAction, usd, type Dashboard, type OwnerIdentity } from "../api";
-import { ErrorNote, OutcomeChip, Section } from "../ui/bits";
+import { ErrorNote, Notice, OutcomeChip, Section } from "../ui/bits";
 
 interface Ev {
   type: string;
@@ -13,7 +13,7 @@ interface Ev {
 
 export function LiveAgent({ owner, data, llm, onChanged }: { owner: OwnerIdentity; data: Dashboard; llm: boolean; onChanged: () => void }) {
   const active = data.mandates.find((m) => !m.revoked_at && Date.parse(m.body.valid_until) > Date.now());
-  const [task, setTask] = useState("Do this week's restock. We're low on espresso beans and oat milk, and the vanilla syrup is nearly gone.");
+  const [task, setTask] = useState("Do this week’s restock. We’re low on espresso beans and oat milk, and the vanilla syrup is nearly gone.");
   const [events, setEvents] = useState<Ev[]>([]);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -33,7 +33,7 @@ export function LiveAgent({ owner, data, llm, onChanged }: { owner: OwnerIdentit
         if (r.status !== "running") {
           clearInterval(timer.current!);
           setStatus(null);
-          if (r.status === "error" && !r.events.some((e) => e.type === "error")) setError(r.stderr.slice(-300) || "agent failed");
+          if (r.status === "error" && !r.events.some((e) => e.type === "error")) setError(r.stderr.slice(-300) || "The agent process stopped unexpectedly.");
           onChanged();
         }
       }, 700);
@@ -43,51 +43,73 @@ export function LiveAgent({ owner, data, llm, onChanged }: { owner: OwnerIdentit
   };
 
   return (
-    <div className="grid gap-5 xl:grid-cols-[420px_1fr]">
-      <Section title="Live Claude agent">
-        <p className="mb-3 text-sm text-ink-300">
-          A real Claude agent with three tools: read its mandate, search the catalog, propose an order. It reads merchant descriptions, including the poisoned one. Whatever it decides,
-          the gateway has the final word. Live runs vary; red-team mode is the deterministic demo.
+    <div className="space-y-6">
+      <div className="space-y-2">
+        <h1 className="text-2xl text-fg">Give the real agent a task</h1>
+        <p className="max-w-[70ch] text-fg-2">
+          A live Claude agent with three tools: read its mandate, search the catalog, propose an order. It reads every merchant description, the poisoned one too. Whatever it
+          decides, the gateway has the last word. Live runs vary; the red team is the repeatable demo.
         </p>
-        <textarea className="field h-28" value={task} onChange={(e) => setTask(e.target.value)} maxLength={1000} />
-        <button className="btn btn-primary mt-3" disabled={!llm || !active || !!status} onClick={start}>
-          {status ? "Agent working…" : "Send to agent"}
-        </button>
-        {!llm && <p className="mt-2 text-xs text-hold">No LLM key configured on this server.</p>}
-        {!active && <p className="mt-2 text-xs text-hold">Sign a mandate first.</p>}
-        <div className="mt-3">
-          <ErrorNote error={error} />
-        </div>
-      </Section>
-      <Section title="Transcript">
-        {events.length === 0 ? (
-          <p className="text-sm text-ink-400">{status ? "Waiting for the first tool call…" : "No run yet."}</p>
-        ) : (
-          <ol className="space-y-3">
-            {events.map((e, i) => (
-              <li key={i} className="rise rounded-lg border border-ink-700 bg-ink-950 p-3 text-sm">
-                {e.type === "tool" && (
-                  <>
-                    <div className="mono text-xs text-blue">→ {e.name}</div>
-                    <pre className="mono mt-1 overflow-auto text-[11px] text-ink-300">{JSON.stringify(e.input)}</pre>
-                    {e.name === "propose_order" && e.result?.outcome ? (
-                      <div className="mt-2 flex flex-wrap items-center gap-2">
-                        <OutcomeChip outcome={e.result.outcome} />
-                        <span className="mono text-xs">{usd(e.result.total_cents ?? 0)}</span>
-                        <span className="text-xs text-ink-300">{e.result.reasons?.map((r) => r.message).join(" ") || "Within mandate."}</span>
+      </div>
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,420px)_minmax(0,1fr)]">
+        <Section title="Task">
+          <label className="block space-y-1.5">
+            <span className="label">What should it do?</span>
+            <textarea className="field h-32" value={task} onChange={(e) => setTask(e.target.value)} maxLength={1000} />
+          </label>
+          <button className="btn btn-primary mt-3" aria-busy={!!status} disabled={!llm || !active || !!status} onClick={start}>
+            {status ? "The agent is working" : "Send to the agent"}
+          </button>
+          <div className="mt-3 space-y-2">
+            {!llm && <Notice tone="amber">This server has no LLM key, so the live agent is off.</Notice>}
+            {!active && <Notice tone="amber">Sign a mandate first; the agent can only act inside one.</Notice>}
+            <ErrorNote error={error} />
+          </div>
+        </Section>
+        <Section title="What it did">
+          {events.length === 0 ? (
+            <p className="text-sm text-dim">{status ? "Waiting for its first step." : "No run yet. Each tool call and each gateway verdict appears here in order."}</p>
+          ) : (
+            <ol className="relative space-y-4 border-l border-line-2 pl-5">
+              {events.map((e, i) => (
+                <li key={i} className="rise space-y-1.5 text-sm">
+                  {e.type === "tool" && (
+                    <>
+                      <div className="flex flex-wrap items-baseline gap-x-3">
+                        <span className="font-medium text-fg">{TOOL_LABEL[e.name ?? ""] ?? e.name}</span>
+                        <span className="mono text-xs text-dim">{e.name}</span>
                       </div>
-                    ) : (
-                      <div className="mt-1 text-xs text-ink-400">{e.error ? `error: ${e.error}` : `${Array.isArray(e.result) ? `${e.result.length} results` : "ok"}`}</div>
-                    )}
-                  </>
-                )}
-                {e.type === "final" && <div className="whitespace-pre-wrap text-ink-100">{e.text}</div>}
-                {e.type === "error" && <div className="text-block">{e.error}</div>}
-              </li>
-            ))}
-          </ol>
-        )}
-      </Section>
+                      <pre className="mono overflow-auto rounded-[var(--radius-pill)] border border-line bg-well px-3 py-2 text-xs text-fg-2">{JSON.stringify(e.input)}</pre>
+                      {e.name === "propose_order" && e.result?.outcome ? (
+                        <div className="flex flex-wrap items-center gap-2">
+                          <OutcomeChip outcome={e.result.outcome} />
+                          <span className="mono text-fg">{usd(e.result.total_cents ?? 0)}</span>
+                          <span className="text-fg-2">{e.result.reasons?.map((r) => r.message).join(" ") || "Within the mandate."}</span>
+                        </div>
+                      ) : (
+                        <p className={e.error ? "text-stop" : "text-dim"}>{e.error ? `Failed: ${e.error}` : Array.isArray(e.result) ? `${e.result.length} results` : "Done"}</p>
+                      )}
+                    </>
+                  )}
+                  {e.type === "final" && (
+                    <>
+                      <span className="font-medium text-fg">The agent’s summary</span>
+                      <p className="whitespace-pre-wrap text-fg-2">{e.text}</p>
+                    </>
+                  )}
+                  {e.type === "error" && <p className="text-stop">{e.error}</p>}
+                </li>
+              ))}
+            </ol>
+          )}
+        </Section>
+      </div>
     </div>
   );
 }
+
+const TOOL_LABEL: Record<string, string> = {
+  get_mandate: "Read its mandate",
+  search_catalog: "Searched the catalog",
+  propose_order: "Proposed an order",
+};

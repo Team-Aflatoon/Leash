@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, createOwner, loadOwner, saveOwner, short, type Dashboard, type OwnerIdentity, type ServerConfig } from "./api";
-import { ErrorNote } from "./ui/bits";
+import { ErrorNote, Notice } from "./ui/bits";
 import { DecisionsGrid, LedgerView } from "./views/Grids";
 import { LiveAgent } from "./views/LiveAgent";
 import { MandateView } from "./views/Mandate";
@@ -64,8 +64,8 @@ export function App() {
           <Pill ok={!!config?.paypal_configured} label={`PayPal ${config?.paypal_configured ? "sandbox" : "not configured"}`} />
           <Pill ok={!!data?.owner.paypal_linked} label={data?.owner.paypal_linked ? "wallet linked" : "wallet not linked"} />
           <Pill ok={!!config?.llm_configured} label={config?.llm_configured ? "intent check on" : "LLM off"} />
-          <span className="mono text-ink-400" title={owner.public_key_hex}>
-            owner key {short(owner.public_key_hex, 10)}
+          <span className="text-sm text-dim" title={owner.public_key_hex}>
+            Your key <span className="mono text-blue">{short(owner.public_key_hex, 10)}</span>
           </span>
         </div>
       </header>
@@ -79,10 +79,10 @@ export function App() {
       </nav>
 
       <main className="mt-6 space-y-4">
-        {banner && <div className="rounded-lg border border-blue/40 bg-blue/10 px-3 py-2 text-sm text-blue">{banner}</div>}
+        {banner && <Notice>{banner}</Notice>}
         <ErrorNote error={error} />
         {!data ? (
-          <p className="text-sm text-ink-400">Loading…</p>
+          <div className="panels" aria-busy="true"><div className="h-40 bg-panel" /><div className="h-64 bg-panel" /></div>
         ) : (
           <>
             {tab === "Red team" && <RedTeam owner={owner} paypalLinked={data.owner.paypal_linked} paypalConfigured={!!config?.paypal_configured} onChanged={refresh} />}
@@ -94,7 +94,7 @@ export function App() {
           </>
         )}
       </main>
-      <footer className="mt-10 text-xs text-ink-400">PayPal sandbox only. No real money moves; sandbox payments settle to a test merchant.</footer>
+      <footer className="mt-10 text-sm text-dim">PayPal sandbox only. No real money moves; sandbox payments settle to a test merchant.</footer>
     </div>
   );
 }
@@ -106,9 +106,9 @@ function Pill({ ok, label }: { ok: boolean; label: string }) {
 function Logo() {
   return (
     <svg width="34" height="34" viewBox="0 0 32 32" aria-hidden>
-      <rect width="32" height="32" rx="8" fill="#0f1829" stroke="#1e2d47" />
-      <path d="M9 22V10h3v9h7v3z" fill="#34d399" />
-      <circle cx="22.5" cy="11.5" r="2.5" fill="none" stroke="#60a5fa" strokeWidth="1.6" />
+      <rect width="32" height="32" rx="8" className="fill-panel stroke-line" />
+      <path d="M9 22V10h3v9h7v3z" className="fill-amber" />
+      <circle cx="22.5" cy="11.5" r="2.5" fill="none" className="stroke-blue" strokeWidth="1.6" />
     </svg>
   );
 }
@@ -121,19 +121,20 @@ function Onboarding({ onReady, config }: { onReady: (o: OwnerIdentity) => void; 
     <div className="mx-auto flex min-h-screen max-w-xl flex-col justify-center px-4">
       <div className="mb-6 flex items-center gap-3">
         <Logo />
-        <span className="text-xl font-semibold">Leash</span>
+        <span className="text-xl font-medium">Leash</span>
       </div>
-      <h1 className="text-3xl font-semibold leading-tight">Let an AI agent spend money, inside limits it can’t talk its way around.</h1>
-      <p className="mt-3 text-ink-300">
+      <h1 className="max-w-none text-3xl">Let an AI agent spend money, inside limits it can’t talk its way around.</h1>
+      <p className="mt-4 text-fg-2">
         You’ll get an owner key, generated in this browser. It signs your spending mandates and approvals. The gateway only ever sees the public half, so nobody else, including the
         gateway and the agent, can sign as you.
       </p>
-      <label className="mt-6 block">
+      <label className="mt-8 block space-y-1.5">
         <span className="label">Business name</span>
-        <input className="field mt-1" value={name} onChange={(e) => setName(e.target.value)} maxLength={80} />
+        <input className="field" value={name} onChange={(e) => setName(e.target.value)} maxLength={80} />
       </label>
       <button
-        className="btn btn-primary mt-4 self-start px-5 py-3"
+        className="btn btn-primary btn-lg mt-4 self-start"
+        aria-busy={busy}
         disabled={busy || !name.trim()}
         onClick={async () => {
           setBusy(true);
@@ -147,12 +148,16 @@ function Onboarding({ onReady, config }: { onReady: (o: OwnerIdentity) => void; 
           }
         }}
       >
-        {busy ? "Creating key…" : "Create owner key"}
+        {busy ? "Creating your key" : "Create owner key"}
       </button>
       <div className="mt-4">
         <ErrorNote error={error} />
       </div>
-      {config && !config.paypal_configured && <p className="mt-4 text-xs text-hold">This server has no PayPal sandbox credentials yet. You can explore, but payments will be refused.</p>}
+      {config && !config.paypal_configured && (
+        <div className="mt-4">
+          <Notice tone="amber">This server has no PayPal sandbox credentials yet. You can explore, but payments will be refused.</Notice>
+        </div>
+      )}
     </div>
   );
 }

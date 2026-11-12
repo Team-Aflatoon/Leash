@@ -12,7 +12,7 @@ Last updated: 2026-11-12. Local repo only; no remote yet.
 | M3 | PayPal sandbox provider, spike + webhook-registration scripts, contract test | code done. **Not yet run against the real sandbox (no credentials yet)** |
 | M4 | Claude intent check (cached, fail-closed), mandate drafter, live tool-runner agent | code done. **Not yet run against the real API (no key yet)** |
 | M5 | Scripted red team, agent child process with per-run scoped token, demo endpoints | done |
-| M6 | Owner console (React + AG Grid) | pilot redesign of the red-team screen done; other screens wait for pilot approval |
+| M6 | Owner console (React + AG Grid) | redesigned (Hallmark Console theme) and checked in a browser at 1440 and 390 wide |
 | M7 | Deploy files, docs, mutation checks, adversarial review + fixes | done (docs/REVIEW.md) |
 
 ## Verified
@@ -26,7 +26,7 @@ Last updated: 2026-11-12. Local repo only; no remote yet.
   PAYMENT_CONSENT_MISSING, as expected without a linked wallet. Ledger chain verifies.
 
 - `docker build` succeeds; the container serves the console, and inside it the red team spawns the agent as the non-root `node` user (smoke: 5/5 attacks blocked).
-- Console checked in a browser at 1440 and 390 wide. This found a red-team accounting bug, now fixed. The red-team screen is redesigned with the Hallmark Console theme as a pilot; the other screens only carry the new tokens until the pilot is approved.
+- Console checked in a browser at 1440 and 390 wide. This found a red-team accounting bug, now fixed. All six screens are redesigned with the Hallmark Console theme; sloplint reports 0 FAIL. Browser flows checked: create key, sign a mandate, revoke with inline confirm, run the red team, read the decisions and ledger.
 - GitHub: https://github.com/Team-Aflatoon/Leash (private), CI green.
 
 ## Not verified yet (needs the user)
