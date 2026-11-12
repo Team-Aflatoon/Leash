@@ -8,7 +8,7 @@ a purchase. The gateway checks the proposal against a mandate the owner signed w
 ALLOW, HOLD or BLOCK with plain deterministic rules, and only then moves money through the PayPal sandbox.
 
 - **Live demo:** https://leash-pwu7.onrender.com. Click **Run red team**.
-- **Video (< 3 min):** `[<VIDEO_URL>](https://youtu.be/XFhR8Wyqx08)`
+- **Video (< 3 min):** [Watch the demo](https://youtu.be/XFhR8Wyqx08)
 - **License:** MIT
 
 > Sandbox only. No real money moves. Payments settle to a sandbox merchant we created, and the catalog is a fixture
