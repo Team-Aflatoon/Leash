@@ -16,9 +16,9 @@ Last updated: 2026-11-12. Local repo only; no remote yet.
 | M7 | Deploy files, docs, mutation checks, adversarial review + fixes | done (docs/REVIEW.md) |
 
 ## Verified
-- `pnpm typecheck` clean; `pnpm test`: 102 tests across 5 files (core, gateway integration on real Postgres, review
+- `pnpm typecheck` clean; `pnpm test`: 119 tests across 5 files (core, gateway integration on real Postgres, review
   regressions, PayPal client, agent/red team).
-- `bash scripts/mutation-check.sh`: 16 of 16 mutants killed.
+- `bash scripts/mutation-check.sh`: 18 of 18 mutants killed.
 - Adversarial review: 13 findings (4 high). 12 fixed with regression tests; R8 (process isolation) documented as a
   limit, with a separate agent LLM key supported.
 - `npx tsx scripts/smoke.ts` against the real `main.ts` (no credentials): the red team runs through the spawned agent
@@ -30,7 +30,7 @@ Last updated: 2026-11-12. Local repo only; no remote yet.
 - GitHub: https://github.com/Team-Aflatoon/Leash (private), CI green.
 
 - **Real end to end (2026-11-12):** owner linked PayPal through the hold (buyer approval once, $2,000). Red team: 6/6, with the honest $86.40 and the burst $108 captured at PayPal (checked via GET /v2/payments/captures: COMPLETED, invoice = our payment id). Live Gemini agent: blocked at $254.70 (over cap and budget), then two allowed orders ($148.80, $9.75) captured; it did not follow the poisoned listing.
-- 119 tests; mutation script now has 18 mutants (re-run after the Plan B additions pending).
+- 119 tests; `bash scripts/mutation-check.sh`: 18 of 18 mutants killed (incl. Plan B hold limit and in-doubt capture).
 
 ## Not verified yet
 - Webhook verification with real PayPal events (needs a public URL: deploy first).

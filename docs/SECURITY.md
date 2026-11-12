@@ -22,7 +22,7 @@ calls from a job queue using deterministic idempotency keys. Every step is appen
 ## Guarantees → tests
 
 Each test below fails if its guarantee breaks. `scripts/mutation-check.sh` removes each guard in turn and confirms
-the test fails (last run: **16 of 16 mutants killed**, 0 survived, 0 non-compiling). An independent adversarial review found 13
+the test fails (last run: **18 of 18 mutants killed**, 0 survived, 0 non-compiling). An independent adversarial review found 13
 more issues; they are fixed and regression-tested, see [REVIEW.md](REVIEW.md).
 
 | # | Guarantee | Mechanism | Test(s) | Mutation killed |

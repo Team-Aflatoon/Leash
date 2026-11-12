@@ -61,7 +61,7 @@ pnpm install
 pnpm db:start                      # local cluster on :54329 (or point DATABASE_URL at your own Postgres)
 cp .env.example .env               # fill in PayPal sandbox credentials + GEMINI_API_KEY (see below)
 pnpm build                         # builds the console
-pnpm test                          # 102 tests, needs the DB from db:start
+pnpm test                          # 119 tests, needs the DB from db:start
 set -a; source .env; set +a; pnpm start   # http://localhost:8080
 ```
 
@@ -100,7 +100,7 @@ fill in `PUBLIC_URL`, `PAYPAL_*` and `ANTHROPIC_API_KEY`. The same Dockerfile wo
 ## Security
 
 See [docs/SECURITY.md](docs/SECURITY.md). It covers the threat model, each guarantee with the test that proves
-it, and the mutation-test results (`bash scripts/mutation-check.sh`: 16 of 16 mutants killed), plus [docs/REVIEW.md](docs/REVIEW.md), the adversarial review and its fixes. `npx tsx scripts/smoke.ts <url>` drives a running gateway end to end.
+it, and the mutation-test results (`bash scripts/mutation-check.sh`: 18 of 18 mutants killed), plus [docs/REVIEW.md](docs/REVIEW.md), the adversarial review and its fixes. `npx tsx scripts/smoke.ts <url>` drives a running gateway end to end.
 
 ## Tools used
 
