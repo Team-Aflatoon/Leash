@@ -66,7 +66,7 @@ set -a; source .env; set +a; pnpm start   # http://localhost:8080
 ```
 
 Without PayPal credentials the server still runs, but every payment is refused: there is no simulated payment
-path. Without an LLM key (`GEMINI_API_KEY`, or `ANTHROPIC_API_KEY` with `LLM_PROVIDER=anthropic`) the rules still
+path. `GROQ_API_KEY` adds a fallback for when Gemini is overloaded. Without an LLM key (`GEMINI_API_KEY`, `GROQ_API_KEY`, or `ANTHROPIC_API_KEY` with `LLM_PROVIDER=anthropic`) the rules still
 decide everything, and the intent check reports "not configured".
 
 ### PayPal sandbox setup
@@ -108,6 +108,7 @@ it, and the mutation-test results (`bash scripts/mutation-check.sh`: 18 of 18 mu
 |------|-------------------|
 | **PayPal REST (sandbox)** | Vault v3 setup and payment tokens (one-time consent). Orders v2 `intent: AUTHORIZE` with `vault_id` and merchant-initiated `stored_credential`. Authorizations v2 capture and void. `PayPal-Request-Id` idempotency. Webhooks with `verify-webhook-signature`. Facts and sources are in [docs/PAYPAL_FACTS.md](docs/PAYPAL_FACTS.md). |
 | **Gemini API** (`gemini-flash-latest`, default) or **Claude API** | Mandate drafting from plain English (JSON-schema output), the intent-match check (can only escalate, fails closed), and the live shopping agent (function calling). `LLM_PROVIDER` picks the adapter; both share one prompt and one contract. |
+| **Groq API** (`gpt-oss-120b`, free tier) | Fallback when Gemini is overloaded: the live agent switches to it mid-run, and the intent check and drafter retry on it. Only availability errors fall back, so a blocked answer still holds the order (D14). |
 | **AG Grid** (Community) | Decisions grid and ledger grid in the owner console. |
 | **Render** | Hosting: Docker web service and Postgres (`render.yaml`). |
 | Postgres, Fastify, React, Vite, Tailwind, `@noble/curves` | Storage and locking, API, console, Ed25519 |

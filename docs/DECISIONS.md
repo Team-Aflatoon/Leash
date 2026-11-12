@@ -100,6 +100,25 @@ hand-written JSON schema (the supported subset: no nullable unions) and validate
 non-STOP finish, bad JSON or an HTTP or network error is an `error` verdict, which is a HOLD (fail closed, D7).
 SDK `@google/genai` is pinned to 2.32.0; 3.x was under two weeks old.
 
+## D14. Groq as the fallback behind Gemini
+
+Gemini's free tier often answers 503 "high demand": that is Google's capacity, not our quota (quota is 429) or our
+code. Our retries were all Gemini models, which fail together. Groq (free tier, OpenAI-compatible, tested live with our
+three tools) fails for unrelated reasons, so it is the fallback. Grok (xAI) was considered and rejected: no free tier.
+
+- **Gateway:** `fallbackIntentChecker` asks Groq **only** when Gemini failed for an availability reason (overload,
+  rate limit, timeout, network, credentials; `isAvailabilityError`). A safety block or unusable output stays an error,
+  which is a HOLD: otherwise an agent could trip one model's filter on purpose to get a second opinion. Each provider
+  has its own verdict cache. Drafting falls back on any failure; the owner reviews every field before signing.
+- **Live agent:** one provider-neutral history. A run may switch Gemini → Groq once and never back, because Groq's
+  turns carry no Gemini thought signatures. Tools run once per returned call; a switch repeats only the model request.
+  A cart proposed twice in one run resends the first request byte for byte, so the gateway replays its decision.
+- **Timing:** with Groq configured, Gemini gets two 15-second attempts instead of four 30-second ones.
+- **Limits:** Groq's free tier allows about 8,000 tokens a minute per model, and one agent run uses most of that.
+  The client moves to the next model on a 429 (each has its own limit) and waits out a short Retry-After once.
+  gpt-oss models run at `reasoning_effort: low`, except drafting at `medium` (at low it skipped a stated threshold).
+- `LLM_PROVIDER=groq`, or a Groq key alone, makes Groq the only provider. The Claude path has no fallback.
+
 ## D13. Plan B payment consent: one approval per mandate (confirmed in the sandbox)
 
 PayPal refused Vault for both sandbox merchants (`NOT_ENABLED_TO_VAULT_PAYMENT_SOURCE`, SANDBOX_LOG). The brief's

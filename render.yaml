@@ -33,6 +33,10 @@ services:
         sync: false
       - key: AGENT_GEMINI_API_KEY
         sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: AGENT_GROQ_API_KEY
+        sync: false
       - key: ANTHROPIC_API_KEY
         sync: false
       - key: AGENT_ANTHROPIC_API_KEY

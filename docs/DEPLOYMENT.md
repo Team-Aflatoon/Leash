@@ -8,6 +8,7 @@ This guide puts a public Leash demo online. **Every service is on a free plan. N
 | Database | [Neon](https://neon.com) Postgres | Free | $0 |
 | Payments | [PayPal Developer](https://developer.paypal.com) sandbox | Free | $0, no real money moves |
 | LLM | [Google AI Studio](https://aistudio.google.com) Gemini API key | Free tier | $0 |
+| LLM fallback | [Groq](https://console.groq.com) API key | Free tier | $0 |
 | Code | GitHub repo `Team-Aflatoon/Leash` | Free | $0 |
 
 Time needed: about 30 minutes for a first deploy.
@@ -31,6 +32,8 @@ You need:
 2. A **PayPal sandbox app** (Client ID and Secret) and a **sandbox Personal (buyer) account**. Both are under
    developer.paypal.com → Apps & Credentials and → Sandbox → Accounts. Use a US app; it is the one tested.
 3. A **Gemini API key** from aistudio.google.com → Get API key.
+4. A **Groq API key** from console.groq.com → API Keys (starts with `gsk_`). Optional, but it is what keeps the
+   live agent working when Gemini is overloaded.
 
 Never paste these keys into the repo, an issue, or a chat. They go only into the Render dashboard.
 
@@ -63,6 +66,8 @@ You do not need to create tables. Leash runs its migrations every time it starts
 | `GEMINI_API_KEY` | Your Gemini key |
 | `PAYPAL_WEBHOOK_ID` | Leave empty for now (Step 4) |
 | `AGENT_GEMINI_API_KEY` | Optional: a second Gemini key just for the live agent. Empty means it uses `GEMINI_API_KEY`. |
+| `GROQ_API_KEY` | Your Groq key. Groq takes over when Gemini is overloaded. |
+| `AGENT_GROQ_API_KEY` | Optional: a second Groq key just for the live agent. Empty means it uses `GROQ_API_KEY`. |
 | `ANTHROPIC_API_KEY`, `AGENT_ANTHROPIC_API_KEY` | Leave empty. Only needed with `LLM_PROVIDER=anthropic`, which is paid. |
 
    These are set for you by the Blueprint: `GATEWAY_SIGNING_KEY` and `AGENT_TOKEN` (random), `LLM_PROVIDER=gemini`,
@@ -116,8 +121,12 @@ You can also do it by hand: developer.paypal.com → your app → **Add Webhook*
 - **Timers run late while asleep.** A held payment auto-voids after 10 minutes, but if the service is asleep the void
   runs when it wakes. Money jobs are stored in the database, so none are lost.
 - **PayPal webhooks still arrive.** PayPal retries failed deliveries, and the first retry wakes the service.
-- **Gemini free tier is rate limited.** At busy times the model can answer "high demand". Leash retries, falls back to
-  a smaller model, and if all fail it **holds** the order rather than allowing it. The red team does not need the LLM.
+- **Gemini free tier is often overloaded.** At busy times it answers "high demand". With `GROQ_API_KEY` set, Leash
+  gives Gemini two short tries (about 30 seconds), then hands the request to Groq. The live agent switches for the rest
+  of that run and the Live agent screen says so. If both are unavailable, the order is **held**, never allowed. The red
+  team does not need the LLM.
+- **Groq free tier allows about 8,000 tokens a minute per model.** One live agent run uses most of that. Leash moves to
+  the next Groq model when one is rate limited, but leave a minute between back-to-back live runs.
 - **Free instance size** is 512 MB RAM. That is enough for the gateway plus one live agent run at a time.
 
 ## Updating
@@ -135,9 +144,11 @@ themselves.
 | Database connection times out | Make sure you used the **direct** string (pooling off), not the `-pooler` host. |
 | Linking PayPal returns to a localhost page | `PUBLIC_URL` is still wrong. Redo Step 3. |
 | Payments are all refused with "not configured" | `PAYPAL_CLIENT_ID` or `PAYPAL_CLIENT_SECRET` is missing or wrong. |
-| Intent check says "not configured" | `GEMINI_API_KEY` is missing. Rules still decide everything. |
+| Intent check says "not configured" | `GEMINI_API_KEY` and `GROQ_API_KEY` are both missing. Rules still decide everything. |
+| Live agent says it switched to Groq every run | Gemini is overloaded or its key is wrong. Check `GEMINI_API_KEY`; nothing else is needed. |
 | Neon says compute quota reached | Something kept the database awake all month. Remove any pinger; it resets next month. |
 
 ## Before the repo goes public
 
-Rotate the PayPal sandbox secret and the Gemini key that were shared during development, then update them in Render.
+Rotate the PayPal sandbox secret, the Gemini key and the Groq key that were shared during development, then update
+them in Render.

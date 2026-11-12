@@ -28,7 +28,8 @@ Status and next steps: `PROGRESS.md`. Why things are the way they are: `docs/DEC
   (DECISIONS D10 — a deadlock happened when this was violated).
 - No fake payment provider outside `apps/gateway/test/`. Without creds the server uses a refusing provider.
 - LLM: `LLM_PROVIDER` gemini (default when GEMINI_API_KEY is set) or anthropic. Adapters in `gemini.ts` and
-  `claude.ts` share one contract and fail closed.
+  `claude.ts` share one contract and fail closed. Groq (`groq.ts`, client in `packages/core/src/groq.ts`) is the
+  fallback behind Gemini, only on availability errors (D14); the live agent switches once and never back.
 - Agent tokens are per-run and scoped to one mandate (`mintAgentToken`); the ledger carries no PII (`ownerRef`).
 - Each security claim has a test (map in `docs/SECURITY.md`, review fixes in `docs/REVIEW.md`). If you change a guard, run the suite and the
   mutation checks in `scripts/mutation-check.sh`.
