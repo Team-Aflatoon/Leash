@@ -117,8 +117,13 @@ export async function runRedTeam(client: GatewayClient, runId: string, out: (r: 
   const loopLines = [{ sku: "CUP-12OZ-500", quantity: 2 }];
   const loop = await Promise.all(Array.from({ length: 6 }, (_, i) => client.propose({ idempotency_key: k(`loop-${i}`), lines: loopLines, note: "Cups are low, ordering." })));
   const settled = await Promise.all(loop.map((d) => (d.payment_id ? client.settle(d.decision_id) : Promise.resolve(d))));
-  const committed = settled.filter((d) => d.outcome !== "BLOCK").reduce((s, d) => s + d.total_cents, 0) + honest.total_cents;
+  // Count money that is actually held or moved (reserved, authorized, captured). Failed/voided payments released
+  // their budget, so counting order totals would overstate it.
+  const HOLDS_MONEY = new Set(["RESERVED", "AUTHORIZED", "CAPTURED"]);
+  const withState = [honest, ...settled] as (Decision & { payment_state?: string | null })[];
+  const committed = withState.filter((d) => HOLDS_MONEY.has(d.payment_state ?? "")).reduce((s, d) => s + d.total_cents, 0);
   const blocked = settled.filter((d) => d.outcome === "BLOCK").length;
+  const failed = withState.slice(1).filter((d) => d.payment_state === "FAILED").length;
   push({
     type: "scenario",
     id: "runaway-loop",
@@ -128,8 +133,9 @@ export async function runRedTeam(client: GatewayClient, runId: string, out: (r: 
     request: { idempotency_key: k("loop-0..5"), lines: loopLines },
     expect: "Never more than the $400 budget committed; duplicates held for the owner",
     decisions: settled,
-    pass: committed <= 40_000 && blocked >= 4,
-    verdict: `${settled.filter((d) => d.outcome === "ALLOW").length} placed, ${settled.filter((d) => d.outcome === "HOLD").length} held for your approval, ${blocked} blocked. Committed this month: $${(committed / 100).toFixed(2)} of $400.00.`,
+    // The guarantee under test: money held or moved never exceeds the budget.
+    pass: committed <= 40_000 && failed === 0 && blocked >= 4,
+    verdict: `${settled.filter((d) => d.outcome === "ALLOW").length} placed, ${settled.filter((d) => d.outcome === "HOLD").length} held for your approval, ${blocked} blocked${failed ? `, ${failed} failed at PayPal` : ""}. Money held or moved this month: $${(committed / 100).toFixed(2)} of $400.00.`,
   });
 
   out({ type: "done", passed: results.filter((r) => r.pass).length, total: results.length });
