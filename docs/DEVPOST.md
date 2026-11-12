@@ -60,7 +60,7 @@ statement, and wrote it up (docs/DECISIONS.md, D10). Designing the no-redirect P
 Vault and Orders specs closely, and the Day-1 spike script confirms it against the real sandbox.
 
 ## Accomplishments we're proud of
-- 119 automated tests, including a 50-way concurrency test that proves the budget can't be overrun.
+- 136 automated tests, including a 50-way concurrency test that proves the budget can't be overrun.
 - A mutation script that removes each security guard in turn. All 18 mutants are caught by the tests.
 - An independent adversarial review found 13 issues, including a cross-owner token scope bug and a void that
   could hide a completed capture. All are fixed, each with a regression test (docs/REVIEW.md).
