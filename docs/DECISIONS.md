@@ -61,8 +61,9 @@ Decision severity is ordered ALLOW < HOLD < BLOCK. Final = max(rules, llm). The 
 Red-team attacks are executed by a **scripted compromised agent** that always obeys the injection — the worst
 case we must survive. Every attack is stopped by deterministic rules, so outcomes don't depend on the LLM.
 LLM intent verdicts are cached by `sha256(model, prompt version, input)`, so the honest purchase gets the same
-verdict on every run. Demo reset wipes demo state (not the LLM cache) and the console re-signs a fresh demo
-mandate.
+verdict on every run. Demo reset never deletes anything: it retires the owner's active mandates (voiding their
+open holds at PayPal) and the console signs a fresh demo mandate, so each run starts with a fresh $400 budget while
+the ledger keeps the full history.
 
 ## D9. Hosting: Render (Docker web service + Render Postgres)
 
