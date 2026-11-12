@@ -1,0 +1,69 @@
+# Decisions
+
+Each entry: what we chose, why, and what we gave up. Newest at the bottom.
+
+## D1. TypeScript monorepo, one deployable service + Postgres
+
+- `packages/core`: pure, dependency-light domain code (canonical JSON, Ed25519, mandate schema, policy engine,
+  ledger hashing). Shared by gateway, agent (types only) and console (signing).
+- `apps/gateway`: Fastify API. The **only** process holding `DATABASE_URL`, PayPal credentials and the gateway
+  signing key. Also serves the built console.
+- `apps/agent`: the shopping agent and the scripted red-team "compromised agent". Talks to the gateway over HTTP
+  with a propose-only bearer token. A test asserts it imports nothing from the gateway and its child-process
+  environment has no secrets.
+- `apps/console`: Vite + React + AG Grid owner console.
+
+Why: one service is the simplest thing judges can run and we can host. Process separation (agent as a child
+process with a scrubbed env, talking HTTP) keeps the "agent can't touch money" claim real, not just a module
+boundary.
+
+## D2. Postgres job table instead of BullMQ/Redis
+
+The PDF suggested BullMQ. We use a `jobs` table polled with `FOR UPDATE SKIP LOCKED`. Why: jobs (approval
+timeouts, capture retries, webhook processing) are created in the **same transaction** as the decision that needs
+them, so a crash can never leave a hold without its timeout. One fewer service to host. Cost: polling latency
+(1 s), irrelevant at this scale.
+
+## D3. Ed25519 via `@noble/curves`, canonical JSON via RFC 8785 (JCS)
+
+Same audited library in the browser and in Node. The owner's private key is generated and kept in the browser
+(IndexedDB/localStorage); the gateway stores only the public key, so the gateway cannot forge a mandate,
+approval or revocation. Signatures cover the JCS-canonical bytes of the mandate body.
+
+## D4. Money as integer cents, single currency (USD)
+
+No floats anywhere. PayPal amounts are formatted from cents at the edge.
+
+## D5. Budget enforcement = row lock on the mandate + reservations
+
+Every proposal runs in one transaction that `SELECT … FOR UPDATE`s the mandate row, recomputes period spend from
+`payments` in non-terminal or captured states, and inserts the new payment (a reservation) before commit. Voided
+or failed payments release budget. Concurrent proposals serialise on the lock, so N parallel requests can never
+exceed the budget. PayPal calls happen **after** commit, never inside the lock.
+
+## D6. Idempotency
+
+Agent supplies an `idempotency_key` per proposal. `UNIQUE(agent_id, idempotency_key)`:
+- same key, same body → the original decision is returned, flagged `replay`, no new payment;
+- same key, different body → `BLOCK: IDEMPOTENCY_CONFLICT` (tampering signal).
+Different key, same cart within 24 h → `HOLD: DUPLICATE_SUSPECTED` (a human decides; it might be legitimate).
+Every PayPal call carries a deterministic `PayPal-Request-Id` derived from our payment id + operation, so our own
+retries cannot double-charge.
+
+## D7. LLM checks can only tighten
+
+Decision severity is ordered ALLOW < HOLD < BLOCK. Final = max(rules, llm). The LLM verdict is either
+`consistent` (no change) or `suspicious` (escalate to HOLD). LLM error/timeout when an LLM is configured → HOLD
+(fail closed). The combinator is a pure function with a test that enumerates all inputs.
+
+## D8. Deterministic demo
+
+Red-team attacks are executed by a **scripted compromised agent** that always obeys the injection — the worst
+case we must survive. Every attack is stopped by deterministic rules, so outcomes don't depend on the LLM.
+LLM intent verdicts are cached by `sha256(model, prompt version, input)`, so the honest purchase gets the same
+verdict on every run. Demo reset wipes demo state (not the LLM cache) and the console re-signs a fresh demo
+mandate.
+
+## D9. Hosting: Render (Docker web service + Render Postgres)
+
+Sponsor-eligible per the PDF, `render.yaml` blueprint in the repo. Railway works identically from the Dockerfile.

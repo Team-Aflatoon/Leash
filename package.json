@@ -1,0 +1,23 @@
+{
+  "name": "leash",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.33.4",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "db:start": "bash scripts/dev-db.sh start",
+    "db:stop": "bash scripts/dev-db.sh stop",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:sandbox": "vitest run --config vitest.sandbox.config.ts",
+    "dev": "pnpm --filter @leash/gateway dev",
+    "build": "pnpm --filter @leash/console build",
+    "start": "pnpm --filter @leash/gateway start"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.6",
+    "typescript": "7.0.2",
+    "tsx": "4.23.15",
+    "vitest": "5.1.0"
+  }
+}
